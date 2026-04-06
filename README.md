@@ -1,6 +1,9 @@
 # 🏎️ F1TENTH ROS 2 Foxy Simulation
 
 본 패키지는 ROS 2 Foxy 기반의 F1TENTH 시뮬레이션 환경과 FGM(Follow the Gap Method) 자율주행 알고리즘을 포함하고 있습니다. 제공된 Docker 환경을 통해 실행하는 것을 원칙으로 합니다.
+
+    # -b 옵션으로 foxy 브랜치를 바로 가져옵니다.
+    git clone -b foxy https://github.com/joshuaha0702/f1tenth_ws_foxy
 ## 1. 환경 구축 및 빌드
 
 ### 1. host connection
