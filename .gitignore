@@ -1,0 +1,20 @@
+# ROS 2 Build Folders
+install/
+build/
+log/
+src/f1tenth_system
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE and System Files
+.vscode/
+.DS_Store
+*.swp
+*.bak
+
+# Temporary files
+.python_history
+.vscode/

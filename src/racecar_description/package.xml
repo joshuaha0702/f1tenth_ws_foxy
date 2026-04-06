@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>racecar_description</name>
+  <version>0.0.0</version>
+  <description>Racecar description for ROS 2 Foxy</description>
+  <maintainer email="joshuaha0702@gmail.com">joshua</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- Foxy에서 로봇 소환 및 상태 관리에 필수적인 패키지들 -->
+  <exec_depend>joint_state_publisher</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>gazebo_ros</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+    <!-- Gazebo가 모델과 메쉬를 찾을 수 있게 경로 설정 -->
+    <gazebo_ros gazebo_model_path="${prefix}/models"/>
+    <gazebo_ros gazebo_model_path="${prefix}/.."/>
+  </export>
+</package>

@@ -1,0 +1,65 @@
+<?xml version="1.0"?>
+<sdf version="1.4">
+<world name="racecar_walker">
+
+  <scene>
+    <ambient>0.5 0.5 0.5 1.0</ambient>
+    <shadows>0</shadows>
+  </scene>
+
+  <!-- 태양 광원 -->
+  <include>
+    <uri>model://sun</uri>
+    <pose>0.0 0.0 15.0 0 0 0</pose>
+    <cast_shadows>false</cast_shadows>
+  </include>
+
+  <!-- 추가 조명 -->
+  <light type="point" name="Light 1">
+    <pose>0 0 15 0 0 0</pose>
+    <diffuse>.9 .9 .9 1</diffuse>
+    <specular>.1 .1 .1 1</specular>
+    <direction>0 0 -1</direction>
+  </light>
+
+  <!-- [수정됨] 선배님 트랙 모델 불러오기 -->
+  <include>
+    <uri>model://walker_racecourse</uri> <!-- 경로를 간결하게 수정 -->
+    <pose>-4 2 -.4 0 0 -1.57</pose>
+    <name>walker_racecourse</name>
+  </include>
+
+  <!-- 바닥 평면 -->
+  <model name='ground_plane'>
+    <static>1</static>
+    <link name='link'>
+      <collision name='collision'>
+        <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+        <surface><friction><ode><mu>1000</mu><mu2>500</mu2></ode></friction></surface>
+      </collision>
+      <visual name='visual'>
+        <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+        <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Grey</name></script></material>
+      </visual>
+    </link>
+  </model>
+      
+  <!-- 선배님이 추가한 임시 벽들 (장애물/경로 변경용) -->
+  <model name='reroute'>
+    <static>1</static>
+    <link name="wall1">
+      <pose>-1.5 9.1 0 0 0 1.7</pose>
+      <collision name="wall1_collision"><geometry><box><size>0.7 5 0.5</size></box></geometry></collision>
+      <visual name="wall1_visual"><geometry><box><size>0.7 5 0.5</size></box></geometry>
+      <material><ambient>0.2 0.2 0.2 1.0</ambient><diffuse>.421 0.225 0.0 1.0</diffuse></material></visual>
+    </link>
+    <link name="wall2">
+      <pose>-8 3 0 0 0 0</pose>
+      <collision name="wall2_collision"><geometry><box><size>0.7 6 0.5</size></box></geometry></collision>
+      <visual name="wall2_visual"><geometry><box><size>0.7 6 0.5</size></box></geometry>
+      <material><ambient>0.2 0.2 0.2 1.0</ambient><diffuse>.421 0.225 0.0 1.0</diffuse></material></visual>
+    </link>
+  </model>
+
+</world>
+</sdf>

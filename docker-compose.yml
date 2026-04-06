@@ -1,0 +1,16 @@
+services:
+  ros2_humble:
+    build: .
+    container_name: f1tenth_foxy
+    network_mode: host
+    ipc: host
+    privileged: true
+    environment:
+      - DISPLAY=$DISPLAY
+      - QT_X11_NO_MITSHM=1
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /dev/dri:/dev/dri
+      - ~/f1tenth_ws_foxy/src:/root/f1tenth_ws/src
+    stdin_open: true
+    tty: true
