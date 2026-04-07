@@ -4,7 +4,7 @@
   <name>racecar_description</name>
   <version>0.0.0</version>
   <description>Racecar description for ROS 2 Foxy</description>
-  <maintainer email="joshuaha0702@gmail.com">joshua</maintainer>
+  <maintainer email="joshuaha0702@todo.todo">joshua</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
