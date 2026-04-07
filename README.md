@@ -73,3 +73,15 @@ Bash
     carWidth_tolerance: 안전 마진 값 (현재 추천: 0.40)
 
     max_speed: 주행 속도 (안정적인 테스트를 위해 1.0 이하 추천)
+
+
+## 📄 License
+
+This project is licensed under the **MIT License**.  
+자세한 내용은 [LICENSE](./LICENSE) 파일을 확인하세요.
+
+---
+**Credits:**
+- Base simulator: [F1TENTH Official](https://github.com/f1tenth/f1tenth_simulator)
+- Environment & Algorithm Porting: Joshua Ha
+- World models: Originally developed by CIRL@seoultech
