@@ -48,7 +48,6 @@ Bash
 
 # 🚀 실행 방법 (데모 주행)
 
-현재 통합 런치가 구성되지 않았으므로, 3개의 터미널을 각각 열어 다음 명령어를 순서대로 실행하세요.
 ### 터미널 1: 가제보 월드 및 차량 스폰
 
 가제보 시뮬레이터를 실행하고 선배님의 racecar_walker 트랙에 차량을 배치합니다.
@@ -66,14 +65,36 @@ Bash
 
     rviz2 -d src/racecar_description/rviz/f1tenth_default.rviz
 
-⚙️ 주요 파라미터 수정 (Tip)
+### 통합 런쳐 실행 
+현재 통합런처에는 위 3가지 기능을 한번에 실행 할 수 있도록 만들었습니다.
 
-만약 차량이 코너 안쪽 벽을 긁는다면, f1tenth_fgm_ros2/src/  fgm_disparities.cpp에서 다음 값을 조정하세요.
+    ros2 launch f1tenth_fgm_ros2 f1tenth_fgm_ros2.launch.py
+
+## 추가적인 기능 구현
+
+### joy_teleop.py
+현재 joystic 으로 가제보 내부 차를 돌릴 수 있도록 런치를 구성해놓았습니다.
+
+조이스틱으로 조종을 위해서 위 방법 터미널 1의 명령어를 실행후 다른 터미널에서 아래 명령어를 실행합니다.
+
+    ros2 launch f1tenth_fgm_ros2 example.launch.py
+
+### data_logger.py
+이 노드는 /scan /drive 토픽을 구독하여 실시간으로 csv파일 형식으로 작성하는 코드입니다.
+
+현재 헤더는 lab, timestamp, speed, steering, scan 으로 되어있습니다.
+
+    ros2 run f1tenth_fgm_ros2 data_logger.py
+
+
+
+### ⚙️ 주요 파라미터 수정 (Tip)
+
+만약 차량이 코너 안쪽 벽을 긁는다면, config의 f1tenth_fgm_ros2.yaml 에서 다음 값을 조정하세요.
 
     carWidth_tolerance: 안전 마진 값 (현재 추천: 0.40)
 
     max_speed: 주행 속도 (안정적인 테스트를 위해 1.0 이하 추천)
-
 
 ## 📄 License
 
