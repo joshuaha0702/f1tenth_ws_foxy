@@ -9,10 +9,12 @@ find_package(ament_cmake REQUIRED)
 
 # 데이터 폴더들을 share/패키지명 경로로 복사
 install(DIRECTORY
+  config
   launch
   urdf
   meshes
   models
+  rviz
   worlds
   DESTINATION share/${PROJECT_NAME}
 )

@@ -1,0 +1,15 @@
+/**: 
+  ros__parameters:
+    # PID Gains
+    linear_velocity_pid_gain: [1.0, 0.0, 0.0]
+    left_steering_pid_gain: [2.0, 0.0, 0.0]
+    right_steering_pid_gain: [2.0, 0.0, 0.0]
+
+    # Vehicle Dimensions
+    wheelbase: 0.325
+    wheel_separation: 0.2
+    wheel_radius: 0.05
+    
+    # Limits
+    max_speed: 10.0
+    max_steering_angle: 0.5236

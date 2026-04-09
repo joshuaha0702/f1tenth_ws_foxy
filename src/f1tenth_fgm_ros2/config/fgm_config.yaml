@@ -1,0 +1,16 @@
+fgm_disparities: # 코드의 Node("fgm_disparities")와 일치해야 함
+  ros__parameters:
+    # 토픽 설정
+    drive_topic: "/drive"
+    lidar_topic: "/scan"
+    lidar_pub_topic: "/disparity_lidar"
+    arrow_marker_topic: "/direction_marker"
+
+    # 차량 제원 및 주행 설정
+    car_length: 0.33
+    car_width: 0.20
+    max_speed: 3.0
+    min_speed: 0.5
+    max_steering_angle: 0.4189 # 약 24도
+    disp_offset: 0.1
+    carWidth_tolerance: 0.4

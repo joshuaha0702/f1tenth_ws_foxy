@@ -1,0 +1,31 @@
+joy_teleop:
+  ros__parameters:
+
+    # 1. 주행 명령 (가장 중요!)
+    drive:
+      type: topic
+      interface_type: geometry_msgs/msg/Twist
+      topic_name: drive  # 우리가 리매핑한 토픽 이름
+      deadman_buttons: [4] # L1 버튼을 누른 상태에서만 작동 (안전 장치)
+      axis_mappings:
+        linear-x:      # 전진/후진
+          axis: 1      # 왼쪽 스틱 상하
+          scale: 2.0   # 최대 속도 (2.0 m/s)
+          offset: 0.0
+        angular-z:     # 조향 (핸들)
+          axis: 3      # 오른쪽 스틱 좌우
+          scale: 0.5   # 최대 조향각 (약 30도)
+          offset: 0.0
+
+    # 2. 비상 정지 버튼 (선택 사항)
+    # 특정 버튼(예: A버튼)을 누르면 즉시 멈추게 설정
+    stop:
+      type: topic
+      interface_type: geometry_msgs/msg/Twist
+      topic_name: drive
+      deadman_buttons: [0] # A 버튼 (번호는 패드마다 다를 수 있음)
+      message_value:
+        linear-x:
+          value: 0.0
+        angular-z:
+          value: 0.0

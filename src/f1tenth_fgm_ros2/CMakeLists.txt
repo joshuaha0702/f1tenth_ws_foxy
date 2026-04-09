@@ -11,8 +11,9 @@ find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED) # Twist 메시지용 추가
 find_package(ackermann_msgs REQUIRED)
-find_package(Eigen3 REQUIRED) # Eigen은 별도 include 경로 필요
+find_package(Eigen3 REQUIRED)
 
 add_executable(fgm_node src/fgm_disparities.cpp) # 파일명이 맞는지 확인하세요!
 
@@ -29,6 +30,7 @@ ament_target_dependencies(fgm_node
   sensor_msgs
   nav_msgs
   visualization_msgs
+  geometry_msgs
   ackermann_msgs
 )
 
@@ -37,4 +39,15 @@ install(TARGETS
   DESTINATION lib/${PROJECT_NAME}
 )
 
+install(PROGRAMS
+  src/joy_teleop.py
+  src/data_logger.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+install(DIRECTORY
+  launch
+  config
+  DESTINATION share/${PROJECT_NAME}
+)
 ament_package()
