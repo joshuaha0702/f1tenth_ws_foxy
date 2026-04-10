@@ -9,13 +9,14 @@ import os
 from datetime import datetime, timezone, timedelta
 
 from sensor_msgs.msg import LaserScan
+from std_msgs.msg import Empty
 from geometry_msgs.msg import Twist
 import nav_msgs.msg
 
 class DataLogger(Node):
     def __init__(self):
         super().__init__('data_logger')
-        
+
         # --- 파라미터 선언 ---
         # 기본값은 20Hz로 설정 (원하는 대로 10, 20 등으로 변경 가능)
         self.declare_parameter('target_hz', 20.0)
@@ -53,16 +54,31 @@ class DataLogger(Node):
         self.odom_sub = self.create_subscription(nav_msgs.msg.Odometry, '/odom', self.odom_callback, 10)
         
         # 구독자 설정
+        self.reset_sub = self.create_subscription(Empty, '/map_reset', self.reset_callback, 10)
         self.scan_sub = self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
         self.drive_sub = self.create_subscription(Twist, '/drive', self.drive_callback, 10)
+        
+        # 리셋 신호 구독
+        self.is_resetting = False # 리셋 직후 데이터를 거르기 위한 플래그
         
         # CSV 헤더 작성 (Timestamp, Speed, Steering, Lidar_0 ... Lidar_1080)
         header = ['lab', 'timestamp', 'speed', 'steering'] + [f'scan_{i}' for i in range(self.scan_downsample_factor+1)]
         self.csv_writer.writerow(header)
         
-
         self.get_logger().info(f'로깅 시작: {filename}')
         self.get_logger().info(f'설정: {self.target_hz}Hz, (빔 개수: {self.scan_downsample_factor})')
+
+    def reset_callback(self, msg):
+        self.lap_count += 1
+        self.is_resetting = True # 플래그 On
+        self.get_logger().info(f'리셋 신호 수신! 현재 Lap: {self.lap_count}')
+        
+        # 0.5초 뒤에 다시 로깅을 시작하도록 타이머 설정 (차체가 가제보 바닥에 안착할 시간)
+        self.reset_timer = self.create_timer(0.5, self.end_reset_period)
+
+    def end_reset_period(self):
+        self.is_resetting = False
+        self.reset_timer.cancel()
 
     def drive_callback(self, msg):
         # 조이스틱에서 들어오는 최신 조종 값을 저장
@@ -70,6 +86,10 @@ class DataLogger(Node):
         self.current_steering = msg.angular.z
 
     def scan_callback(self, msg):
+        # 리셋 중이면 데이터를 저장하지 않고 건너뜀
+        if self.is_resetting:
+            return
+
         # 현재 메시지의 타임스탬프 (초 단위)
         current_time = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
 
