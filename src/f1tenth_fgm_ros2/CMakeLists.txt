@@ -42,6 +42,7 @@ install(TARGETS
 install(PROGRAMS
   src/joy_teleop.py
   src/data_logger.py
+  src/random_reset.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
