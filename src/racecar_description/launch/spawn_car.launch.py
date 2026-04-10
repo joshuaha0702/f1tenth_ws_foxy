@@ -12,7 +12,7 @@ def generate_launch_description():
     xacro_file = os.path.join(pkg_path, 'urdf', 'racecar.xacro')
     
     # [수정] 월드 파일의 전체 경로를 변수로 만듭니다. (따옴표 필수!)
-    world_file_path = os.path.join(pkg_path, 'worlds', 'racecar_walker.world')
+    world_file_path = os.path.join(pkg_path, 'worlds', 'simple.world')
     
     # 2. Xacro를 URDF로 변환
     robot_description_config = xacro.process_file(xacro_file)
@@ -42,7 +42,9 @@ def generate_launch_description():
     spawn_entity = Node(
         package='gazebo_ros',
         executable='spawn_entity.py',
-        arguments=['-topic', 'robot_description', '-entity', 'racecar'],
+        arguments=['-topic', 'robot_description', 
+        '-entity', 'racecar', 
+        '-x', '4.0', '-y', '2.0'],
         output='screen'
     )
 

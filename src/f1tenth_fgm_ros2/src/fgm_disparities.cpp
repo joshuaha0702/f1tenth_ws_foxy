@@ -161,8 +161,8 @@ private:
                 //std::cout << "car_arc_length is: " << car_arc_length << "left_hs is" << left_hs << std::endl;
                 //std::cout << "detected right disparity and alpha is: " << alpha << std::endl;
                 angle_stopper = 0; // 0 radian
-                while(angle_stopper <= alpha) {
-                    
+                while(angle_stopper <= alpha && i + 1 < 1081) {
+
                     range_matrix(i+1,0) = left_hs;
                     range_matrix(i,1) = angle;
                     angle_stopper += angle_increment;
@@ -182,7 +182,7 @@ private:
                 alpha = (car_arc_length) / right_hs; // right_hs as the radius of the big circle
                 angle_stopper = 0; // 0 radian
                 int j = i; // we need j because we are going reverse assigning
-                while(angle_stopper <= alpha) {
+                while(angle_stopper <= alpha && j >= 0) {
                     range_matrix(j,2) = 9;
                     range_matrix(j,0) = right_hs;
                     angle_stopper += angle_increment;
