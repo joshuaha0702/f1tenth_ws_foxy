@@ -68,7 +68,7 @@ Bash
 ### 통합 런쳐 실행 
 현재 통합런처에는 위 3가지 기능을 한번에 실행 할 수 있도록 만들었습니다.
 
-    ros2 launch f1tenth_fgm_ros2 f1tenth_fgm_ros2.launch.py
+    ros2 launch f1tenth_fgm_ros2 f1tenth_foxy_gazebo.launch.py
 
 ## 추가적인 기능 구현
 
