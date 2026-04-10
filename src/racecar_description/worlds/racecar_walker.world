@@ -7,6 +7,12 @@
     <shadows>0</shadows>
   </scene>
 
+  <plugin name="gazebo_ros_state" filename="libgazebo_ros_state.so">
+      <ros>
+        <namespace>/gazebo</namespace>
+      </ros>
+    </plugin>
+
   <!-- 태양 광원 -->
   <include>
     <uri>model://sun</uri>
