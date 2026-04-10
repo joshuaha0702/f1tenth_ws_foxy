@@ -13,6 +13,6 @@ services:
       - /dev/dri:/dev/dri
       - ~/f1tenth_ws_foxy/src:/root/f1tenth_ws/src
       - /dev/input:/dev/input
-      - ~/f1tenth_data:/root/f1tenth_data
+      - ~/f1tenth_ws_foxy/data:/root/f1tenth_data
     stdin_open: true
     tty: true

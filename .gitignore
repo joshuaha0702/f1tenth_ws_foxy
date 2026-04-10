@@ -3,6 +3,7 @@ install/
 build/
 log/
 src/f1tenth_system
+data/
 
 # Python Cache
 __pycache__/

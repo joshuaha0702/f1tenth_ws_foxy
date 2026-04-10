@@ -82,9 +82,14 @@ Bash
 ### data_logger.py
 이 노드는 /scan /drive 토픽을 구독하여 실시간으로 csv파일 형식으로 작성하는 코드입니다.
 
+옵션으로 원하는 hz로 다운스케일링 할 수 있게 넣었습니다.(5.0, 10.0, 20.0, 40.0)
+
+
 현재 헤더는 lab, timestamp, speed, steering, scan 으로 되어있습니다.
 
-    ros2 run f1tenth_fgm_ros2 data_logger.py
+    ros2 run f1tenth_fgm_ros2 data_logger.py --ros-args -p target_hz:=10.0 -p scan_downsample_factor:=360
+
+
 
 
 

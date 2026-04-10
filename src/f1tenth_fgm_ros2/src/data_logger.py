@@ -16,6 +16,19 @@ class DataLogger(Node):
     def __init__(self):
         super().__init__('data_logger')
         
+        # --- 파라미터 선언 ---
+        # 기본값은 20Hz로 설정 (원하는 대로 10, 20 등으로 변경 가능)
+        self.declare_parameter('target_hz', 20.0)
+        self.declare_parameter('scan_downsample_factor', 360)
+
+        self.target_hz = self.get_parameter('target_hz').get_parameter_value().double_value
+        self.scan_downsample_factor = self.get_parameter('scan_downsample_factor').get_parameter_value().integer_value
+        
+        self.max_count = 40.0 / self.target_hz  # 저장 간격 (초)
+        self.last_count = 1.0
+
+        self.scan_factor = 1080 //self.scan_downsample_factor
+
         # 저장할 폴더 생성
         self.save_path = os.path.expanduser('/root/f1tenth_data')
         if not os.path.exists(self.save_path):
@@ -44,10 +57,12 @@ class DataLogger(Node):
         self.drive_sub = self.create_subscription(Twist, '/drive', self.drive_callback, 10)
         
         # CSV 헤더 작성 (Timestamp, Speed, Steering, Lidar_0 ... Lidar_1080)
-        header = ['lab', 'timestamp', 'speed', 'steering'] + [f'scan_{i}' for i in range(1081)]
+        header = ['lab', 'timestamp', 'speed', 'steering'] + [f'scan_{i}' for i in range(self.scan_downsample_factor+1)]
         self.csv_writer.writerow(header)
         
-        self.get_logger().info(f'데이터 로깅 시작: {filename}')
+
+        self.get_logger().info(f'로깅 시작: {filename}')
+        self.get_logger().info(f'설정: {self.target_hz}Hz, (빔 개수: {self.scan_downsample_factor})')
 
     def drive_callback(self, msg):
         # 조이스틱에서 들어오는 최신 조종 값을 저장
@@ -55,15 +70,30 @@ class DataLogger(Node):
         self.current_steering = msg.angular.z
 
     def scan_callback(self, msg):
+        # 현재 메시지의 타임스탬프 (초 단위)
+        current_time = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+
+        # --- 다운스케일링 로직 ---
+        # 마지막 저장 시간으로부터 log_interval(예: 0.1초) 이상 지났는지 확인
+        if self.last_count < self.max_count:
+            self.last_count += 1.0
+            return  # 설정한 주기가 안 되었으면 저장하지 않고 무시
+        
+        self.last_count = 1.0  # 저장 후 카운트 초기화
+        
         # 라이다 데이터가 들어올 때마다 현재 조종 값과 매칭하여 저장
         # -inf나 inf 값 처리 (최대 거리 10m로 제한)
         ranges = np.array(msg.ranges)
         ranges = np.where(np.isinf(ranges), 10.0, ranges)
         ranges = np.where(np.isnan(ranges), 0.0, ranges)
+
+        # 다운스케일링
+       
+        reduced_ranges = ranges[::self.scan_factor]
         
         # 데이터 한 줄 만들기
         timestamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-        row = [self.lap_count, timestamp, self.current_speed, self.current_steering] + ranges.tolist()
+        row = [self.lap_count, timestamp, self.current_speed, self.current_steering] + reduced_ranges.tolist()
         
         # CSV에 쓰기
         self.csv_writer.writerow(row)
