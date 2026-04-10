@@ -84,13 +84,15 @@ Bash
 
 옵션으로 원하는 hz로 다운스케일링 할 수 있게 넣었습니다.(5.0, 10.0, 20.0, 40.0)
 
-
 현재 헤더는 lab, timestamp, speed, steering, scan 으로 되어있습니다.
 
     ros2 run f1tenth_fgm_ros2 data_logger.py --ros-args -p target_hz:=10.0 -p scan_downsample_factor:=360
 
 
+### random_reset.py
+이 노드는 랜덤으로 차량을 재 스폰 해주는 노드입니다.
 
+    ros2 run f1tenth_fgm_ros2 random_reset.py 
 
 
 ### ⚙️ 주요 파라미터 수정 (Tip)
