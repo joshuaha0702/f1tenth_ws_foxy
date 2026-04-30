@@ -31,31 +31,35 @@ class FGMNode : public rclcpp::Node {
 public:
     // 생성자: 반드시 public!
     FGMNode() : Node("fgm_disparities") {
-    // 1. 파라미터 선언 및 가져오기 (이름, 기본값)
-    // ROS 2에서는 선언과 동시에 값을 리턴받을 수 있어 한 줄로 끝낼 수 있습니다.
-    std::string drive_topic = this->declare_parameter("drive_topic", "/drive");
-    std::string lidar_topic = this->declare_parameter("lidar_topic", "/scan");
-    std::string lidar_pub_topic = this->declare_parameter("lidar_pub_topic", "/disparity_lidar");
-    std::string arrow_marker_topic = this->declare_parameter("arrow_marker_topic", "/direction_marker");
+        // 1. 파라미터 선언 및 가져오기 (이름, 기본값)
+        // ROS 2에서는 선언과 동시에 값을 리턴받을 수 있어 한 줄로 끝낼 수 있습니다.
+        // [추가됨] 터미널에서 로봇 이름을 파라미터로 받습니다 (기본값: car1)
+        std::string robot_name = this->declare_parameter("robot_name", "car1");
 
-    car_length = this->declare_parameter("car_length", 0.33);
-    car_width = this->declare_parameter("car_width", 0.20);
-    max_speed = this->declare_parameter("max_speed", 2.0);
-    min_speed = this->declare_parameter("min_speed", 0.5);
-    max_steering_angle = this->declare_parameter("max_steering_angle", 0.4189);
-    disp_offset = this->declare_parameter("disp_offset", 0.1);
-    carWidth_tolerance = this->declare_parameter("carWidth_tolerance", 0.4);
+        // [수정됨] 토픽 이름 앞에 로봇 이름을 붙여서 동적으로 생성합니다.
+        std::string drive_topic = this->declare_parameter("drive_topic", "/" + robot_name + "/drive");
+        std::string lidar_topic = this->declare_parameter("lidar_topic", "/" + robot_name + "/scan");
+        std::string lidar_pub_topic = this->declare_parameter("lidar_pub_topic", "/" + robot_name + "/disparity_lidar");
+        std::string arrow_marker_topic = this->declare_parameter("arrow_marker_topic", "/" + robot_name + "/direction_marker");
 
-    // 2. 퍼블리셔 설정 (this->create_publisher)
-    drive_pub = this->create_publisher<geometry_msgs::msg::Twist>(drive_topic, 10);
-    lidar_pub = this->create_publisher<sensor_msgs::msg::LaserScan>(lidar_pub_topic, 10);
-    arrow_marker_pub = this->create_publisher<visualization_msgs::msg::Marker>(arrow_marker_topic, 10);
+        car_length = this->declare_parameter("car_length", 0.33);
+        car_width = this->declare_parameter("car_width", 0.20);
+        max_speed = this->declare_parameter("max_speed", 2.0);
+        min_speed = this->declare_parameter("min_speed", 0.5);
+        max_steering_angle = this->declare_parameter("max_steering_angle", 0.4189);
+        disp_offset = this->declare_parameter("disp_offset", 0.1);
+        carWidth_tolerance = this->declare_parameter("carWidth_tolerance", 0.4);
 
-    // 3. 서브스크라이버 설정 (this->create_subscription)
-    lidar_sub = this->create_subscription<sensor_msgs::msg::LaserScan>(
-        lidar_topic, 
-        rclcpp::SensorDataQoS(), // 센서 데이터용 QoS 설정
-        std::bind(&FGMNode::lidar_callback, this, std::placeholders::_1)
+        // 2. 퍼블리셔 설정 (this->create_publisher)
+        drive_pub = this->create_publisher<geometry_msgs::msg::Twist>(drive_topic, 10);
+        lidar_pub = this->create_publisher<sensor_msgs::msg::LaserScan>(lidar_pub_topic, 10);
+        arrow_marker_pub = this->create_publisher<visualization_msgs::msg::Marker>(arrow_marker_topic, 10);
+
+        // 3. 서브스크라이버 설정 (this->create_subscription)
+        lidar_sub = this->create_subscription<sensor_msgs::msg::LaserScan>(
+            lidar_topic, 
+            rclcpp::SensorDataQoS(), // 센서 데이터용 QoS 설정
+            std::bind(&FGMNode::lidar_callback, this, std::placeholders::_1)
     );
 
     // 4. 초기 계산 로직
@@ -73,6 +77,9 @@ public:
     drive_cmd.angular.x = 0.0;
     drive_cmd.angular.y = 0.0;
     drive_cmd.angular.z = 0.0;
+
+    // [수정됨] TF 충돌을 막기 위해 프레임 이름에도 로봇 이름을 붙여줍니다 (예: car1/laser)
+    std::string laser_frame_id = robot_name + "/laser";
 
     // 6. 가상 라이다 시각화 설정
     disparity_lidar.ranges.resize(1081);

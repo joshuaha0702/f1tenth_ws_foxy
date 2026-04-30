@@ -3,7 +3,9 @@
 
   <xacro:include filename="$(find racecar_description)/urdf/macros.xacro" />
   <xacro:include filename="$(find racecar_description)/urdf/racecar.gazebo" />
-  <xacro:racecar_gazebo />
+  <xacro:arg name="namespace" default="" />
+  
+  <xacro:racecar_gazebo namespace="$(arg namespace)" />
 
   <!-- 1. 기본 링크 설정 -->
   <link name="base_link" />

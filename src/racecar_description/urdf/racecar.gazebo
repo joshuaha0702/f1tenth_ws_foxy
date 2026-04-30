@@ -2,7 +2,7 @@
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
   <xacro:arg name="params_file" default="$(find racecar_description)/config/params.yaml" />
   <xacro:property name="config" value="${xacro.load_yaml('$(arg params_file)')}" />
-  <xacro:macro name="racecar_gazebo">
+  <xacro:macro name="racecar_gazebo" params="namespace">
     <!-- Chassis physics -->
     <gazebo reference="chassis">
       <mu1 value="0.0"/>
@@ -23,6 +23,7 @@
     <gazebo>
       <plugin name="gazebo_ros_ackermann_drive" filename="libgazebo_ros_ackermann_drive.so">
         <ros>
+          <namespace>${namespace}</namespace>
           <remapping>cmd_vel:=drive</remapping>
           <remapping>odom:=odom</remapping>
         </ros>
@@ -53,15 +54,20 @@
         <publish_odom>true</publish_odom>
         <publish_odom_tf>true</publish_odom_tf>
         <publish_wheel_tf>true</publish_wheel_tf>
-        <odometry_frame>odom</odometry_frame>
-        <robot_base_frame>base_link</robot_base_frame>
+        
+        <!-- namespace split -->
+        <odometry_frame>${namespace}/odom</odometry_frame>
+        <robot_base_frame>${namespace}/base_link</robot_base_frame>
       </plugin>
     </gazebo>
 
     <!-- Joint State Publisher Plugin -->
     <gazebo>
       <plugin name="gazebo_ros_joint_state_publisher" filename="libgazebo_ros_joint_state_publisher.so">
-        <ros><remapping>~/out:=joint_states</remapping></ros>
+        <ros>
+          <namespace>${namespace}</namespace>
+          <remapping>~/out:=joint_states</remapping>
+        </ros>
         <update_rate>30</update_rate>
         <joint_name>left_rear_wheel_joint</joint_name>
         <joint_name>right_rear_wheel_joint</joint_name>
@@ -82,7 +88,10 @@
           <range><min>0.1</min><max>10.0</max></range>
         </ray>
         <plugin name="gazebo_ros_hokuyo_controller" filename="libgazebo_ros_ray_sensor.so">
-          <ros><remapping>~/out:=scan</remapping></ros>
+          <ros>
+            <namespace>${namespace}</namespace>
+            <remapping>~/out:=scan</remapping>
+          </ros>
           <output_type>sensor_msgs/LaserScan</output_type>
           <frame_name>laser</frame_name>
         </plugin>
