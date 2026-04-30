@@ -7,6 +7,7 @@
 // #include "ackermann_msgs/msg/ackermann_drive.hpp"         // ackermann_msgs/AckermannDrive.h 대체
 
 #include "geometry_msgs/msg/twist.hpp"
+#include "geometry_msgs/msg/twist_stamped.hpp"
 
 // 표준 C++ 및 라이브러리 헤더 (기존과 동일하거나 추가됨)
 #include <Eigen/Dense>      // Eigen3 경로가 표준화됨 (CMake에서 Eigen3::Eigen 연결 시)
@@ -48,6 +49,7 @@ public:
 
     // 2. 퍼블리셔 설정 (this->create_publisher)
     drive_pub = this->create_publisher<geometry_msgs::msg::Twist>(drive_topic, 10);
+    drive_stamped_pub = this->create_publisher<geometry_msgs::msg::TwistStamped>(drive_topic + "_stamped", 10);
     lidar_pub = this->create_publisher<sensor_msgs::msg::LaserScan>(lidar_pub_topic, 10);
     arrow_marker_pub = this->create_publisher<visualization_msgs::msg::Marker>(arrow_marker_topic, 10);
 
@@ -66,7 +68,7 @@ public:
     // drive_cmd.drive.acceleration = 0.0;
     // drive_cmd.drive.jerk = 0.0;
 
-    // 5. Twist 메시지 초기화 (Twist는 기본적으로 모든 값이 0.0으로 시작합니다)
+    // 5. Twist / TwistStamped 메시지 초기화
     drive_cmd.linear.x = 0.0;
     drive_cmd.linear.y = 0.0;
     drive_cmd.linear.z = 0.0;
@@ -313,9 +315,13 @@ private:
         disparity_lidar.header.stamp = current_time;
         direction_arrow.header.stamp = current_time;
         
-        // drive_cmd.header.stamp = current_time;
         arrow_marker_pub->publish(direction_arrow);
         drive_pub->publish(drive_cmd);
+        // 로깅용: scan 타임스탬프를 포함한 TwistStamped를 별도 토픽으로 발행
+        geometry_msgs::msg::TwistStamped drive_stamped_cmd;
+        drive_stamped_cmd.header.stamp = msg->header.stamp;
+        drive_stamped_cmd.twist = drive_cmd;
+        drive_stamped_pub->publish(drive_stamped_cmd);
         lidar_pub->publish(disparity_lidar);
 
 
@@ -333,7 +339,7 @@ private:
 
     // 변수 선언들
     // rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub;
-    rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr drive_pub;
+    rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr drive_pub;
     rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr lidar_pub;
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr arrow_marker_pub;
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr lidar_sub;
@@ -354,7 +360,7 @@ private:
     sensor_msgs::msg::LaserScan disparity_lidar;
     visualization_msgs::msg::Marker direction_arrow;
     // ackermann_msgs::msg::AckermannDriveStamped drive_cmd;
-    geometry_msgs::msg::Twist drive_cmd;
+    geometry_msgs::msg::TwistStamped drive_cmd;
     Eigen::MatrixXd::Index furthest_distance_index;
     float furthest_distance;
 };
