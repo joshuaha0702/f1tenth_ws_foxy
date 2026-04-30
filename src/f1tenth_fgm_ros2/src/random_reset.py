@@ -38,8 +38,8 @@ class RandomReset(Node):
         random_x = random.uniform(selected_zone['x_min'], selected_zone['x_max'])
         random_y = random.uniform(selected_zone['y_min'], selected_zone['y_max'])
         
-        # 방향(Yaw)도 랜덤하게 (0 ~ 360도)
-        random_yaw = random.uniform(0, 2 * math.pi)
+        # 방향(Yaw)도 랜덤하게 (-45 ~ 45도)
+        random_yaw = random.uniform(-math.pi/4, math.pi/4)
 
         # Quaternion 변환 (간단한 Yaw -> Quat)
         qz = math.sin(random_yaw / 2.0)
