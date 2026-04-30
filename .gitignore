@@ -4,6 +4,7 @@ build/
 log/
 src/f1tenth_system
 data/
+*.csv
 
 # Python Cache
 __pycache__/

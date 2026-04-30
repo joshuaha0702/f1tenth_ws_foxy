@@ -4,7 +4,7 @@
 import rclpy
 from rclpy.node import Node
 from gazebo_msgs.srv import SetEntityState
-from std_msgs.msg import Empty
+from geometry_msgs.msg import Point # Empty 대신 Point 임포트
 import random
 import math
 
@@ -13,18 +13,31 @@ class RandomReset(Node):
         super().__init__('random_reset')
 
         # 리셋 신호를 보낼 퍼블리셔 추가
-        self.reset_pub = self.create_publisher(Empty, '/map_reset', 10)
+        self.reset_pub = self.create_publisher(Point, '/map_reset', 10)
         
         # 가제보 상태 설정 서비스 클라이언트 생성
         self.client = self.create_client(SetEntityState, '/gazebo/set_entity_state')
         while not self.client.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('가제보 서비스 대기 중...')
 
+        # --- 안전 구역(Safe Zones) 리스트 정의 ---
+        # simple 맵(STL)에서 차량이 스폰되어도 벽과 충돌하지 않는 사각형 구역들을 정의합니다.
+        # 실제 맵 좌표에 맞게 x_min, x_max, y_min, y_max 값을 수정 및 추가하세요.
+        self.safe_zones = [
+            {'x_min': 2.0, 'x_max': 6.0, 'y_min': 1.8,  'y_max': 3.0},   # 안전 구역 1 (하단)
+            {'x_min': 1.0, 'x_max': 3.0, 'y_min': 9.4,  'y_max': 15.4},  # 안전 구역 2 (좌측 중간)
+            {'x_min': 6.0, 'x_max': 8.0, 'y_min': 9.4,  'y_max': 15.4},  # 안전 구역 3 (우측 중간)
+            {'x_min': 2.0, 'x_max': 6.0, 'y_min': 21.8, 'y_max': 23.0}   # 안전 구역 4 (상단)
+        ]
+
     def reset_car(self):
-        # --- 랜덤 범위 설정 (내 맵에 맞춰 수정 필요!) ---
-        # 예: x는 -5~5m, y는 -3~3m 사이
-        random_x = random.uniform(-2.0, 2.0)
-        random_y = random.uniform(-1.0, 1.0)
+        # 정의된 안전 구역 중 하나를 무작위로 선택
+        selected_zone = random.choice(self.safe_zones)
+
+        # 선택된 구역 내에서 무작위 x, y 좌표 생성
+        random_x = random.uniform(selected_zone['x_min'], selected_zone['x_max'])
+        random_y = random.uniform(selected_zone['y_min'], selected_zone['y_max'])
+        
         # 방향(Yaw)도 랜덤하게 (0 ~ 360도)
         random_yaw = random.uniform(0, 2 * math.pi)
 
@@ -34,7 +47,7 @@ class RandomReset(Node):
 
         # 요청 메시지 작성
         request = SetEntityState.Request()
-        request.state.name = 'racecar' # 내 차의 가제보 이름 (보통 ego_racecar)
+        request.state.name = 'racecar' # 내 차의 가제보 이름 (보통 ego_racecar 또는 racecar)
         request.state.pose.position.x = random_x
         request.state.pose.position.y = random_y
         request.state.pose.position.z = 0.05
@@ -46,13 +59,17 @@ class RandomReset(Node):
         rclpy.spin_until_future_complete(self, future)
         
         if future.result() is not None:
-            self.get_logger().info('소환 성공! 신호를 보냅니다.')
-            self.reset_pub.publish(Empty()) # 로거에게 알림!
+            self.get_logger().info(f'소환 성공! [위치: X={random_x:.2f}, Y={random_y:.2f}] 신호를 보냅니다.')
+            msg = Point()
+            msg.x = random_x
+            msg.y = random_y
+            msg.z = 0.0
+            self.reset_pub.publish(msg)
         else:
             self.get_logger().error('소환 실패!')
 
-def main():
-    rclpy.init()
+def main(args=None):
+    rclpy.init(args=args)
     node = RandomReset()
     node.reset_car() # 실행 시 한 번 리셋
     node.destroy_node()

@@ -6,10 +6,11 @@ from rclpy.node import Node
 import numpy as np
 import csv
 import os
+import math
 from datetime import datetime, timezone, timedelta
 
 from sensor_msgs.msg import LaserScan
-from std_msgs.msg import Empty
+from geometry_msgs.msg import Point # Empty 대신 Point 임포트
 from geometry_msgs.msg import Twist
 import nav_msgs.msg
 
@@ -54,12 +55,17 @@ class DataLogger(Node):
         self.odom_sub = self.create_subscription(nav_msgs.msg.Odometry, '/odom', self.odom_callback, 10)
         
         # 구독자 설정
-        self.reset_sub = self.create_subscription(Empty, '/map_reset', self.reset_callback, 10)
+        self.reset_sub = self.create_subscription(Point, '/map_reset', self.reset_callback, 10)
         self.scan_sub = self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
         self.drive_sub = self.create_subscription(Twist, '/drive', self.drive_callback, 10)
         
         # 리셋 신호 구독
         self.is_resetting = False # 리셋 직후 데이터를 거르기 위한 플래그
+
+        # --- 추가된 부분: 스폰 위치와 출발 상태 플래그 ---
+        self.start_x = 0.0
+        self.start_y = 0.0
+        self.left_start_zone = False # 차가 출발지점을 벗어났는지 확인
         
         # CSV 헤더 작성 (Timestamp, Speed, Steering, Lidar_0 ... Lidar_1080)
         header = ['lab', 'timestamp', 'speed', 'steering'] + [f'scan_{i}' for i in range(self.scan_downsample_factor+1)]
@@ -71,9 +77,13 @@ class DataLogger(Node):
     def reset_callback(self, msg):
         self.lap_count += 1
         self.is_resetting = True # 플래그 On
-        self.get_logger().info(f'리셋 신호 수신! 현재 Lap: {self.lap_count}')
+        # 전달받은 스폰 위치를 새로운 출발/결승선으로 등록
+        self.start_x = msg.x
+        self.start_y = msg.y
+        self.left_start_zone = False # 초기화 직후에는 아직 출발 전
         
-        # 0.5초 뒤에 다시 로깅을 시작하도록 타이머 설정 (차체가 가제보 바닥에 안착할 시간)
+        self.get_logger().info(f'리셋 수신! 새 결승선 [X={self.start_x:.2f}, Y={self.start_y:.2f}] 설정 완료 (Lap: {self.lap_count})')
+        
         self.reset_timer = self.create_timer(0.5, self.end_reset_period)
 
     def end_reset_period(self):
@@ -122,14 +132,19 @@ class DataLogger(Node):
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
 
-        # 예: x가 0 근처이고 y가 특정 범위일 때 결승선 통과로 간주
-        if -0.5 < x < 0.5 and -1.0 < y < 1.0:
-            if not self.passed_finish_line:
-                self.lap_count += 1
-                self.passed_finish_line = True
-                self.get_logger().info(f'자동 Lap 감지! 현재 Lap: {self.lap_count}')
-        else:
-            self.passed_finish_line = False
+        # 현재 위치와 새 결승선(스폰 위치) 사이의 거리 계산
+        distance = math.sqrt((x - self.start_x)**2 + (y - self.start_y)**2)
+
+        # 1. 차가 결승선에서 2.0m 이상 멀어지면 '제대로 출발했다'고 판단
+        if not self.left_start_zone and distance > 2.0:
+            self.left_start_zone = True
+            self.get_logger().info('출발지점을 벗어났습니다. 랩 측정을 시작합니다.')
+
+        # 2. 이미 출발한 상태에서 다시 결승선 반경 1.5m 이내로 들어오면 한 바퀴 완료!
+        if self.left_start_zone and distance < 1.5:
+            self.lap_count += 1
+            self.left_start_zone = False # 다음 랩을 위해 다시 False로 초기화
+            self.get_logger().info(f'한 바퀴 완료! 현재 Lap: {self.lap_count}')
 
     def __del__(self):
         self.csv_file.close()
