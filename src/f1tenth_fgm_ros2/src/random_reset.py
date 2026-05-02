@@ -12,8 +12,15 @@ class RandomReset(Node):
     def __init__(self):
         super().__init__('random_reset')
 
+        # [추가됨] 로봇 이름 파라미터 선언 (기본값: car1)
+        self.declare_parameter('robot_name', 'car1')
+        self.robot_name = self.get_parameter('robot_name').get_parameter_value().string_value
+
+        # [수정됨] 토픽 이름 동적 생성 (DataLogger와 연동)
+        reset_topic = f'/{self.robot_name}/map_reset'
+
         # 리셋 신호를 보낼 퍼블리셔 추가
-        self.reset_pub = self.create_publisher(Point, '/map_reset', 10)
+        self.reset_pub = self.create_publisher(Point, reset_topic, 10)
         
         # 가제보 상태 설정 서비스 클라이언트 생성
         self.client = self.create_client(SetEntityState, '/gazebo/set_entity_state')
@@ -47,7 +54,11 @@ class RandomReset(Node):
 
         # 요청 메시지 작성
         request = SetEntityState.Request()
-        request.state.name = 'racecar' # 내 차의 가제보 이름 (보통 ego_racecar 또는 racecar)
+        
+        # [수정됨] 가제보 내 객체 이름도 파라미터로 받은 로봇 이름과 일치시킵니다.
+        # 기존의 고정된 'racecar' 대신 self.robot_name 사용
+        request.state.name = self.robot_name
+
         request.state.pose.position.x = random_x
         request.state.pose.position.y = random_y
         request.state.pose.position.z = 0.05

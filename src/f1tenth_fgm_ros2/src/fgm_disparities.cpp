@@ -346,7 +346,9 @@ private:
 
     // 변수 선언들
     // rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub;
-    rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr drive_pub;
+    rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr drive_pub;
+    rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr drive_stamped_pub; // 새로 추가
+    
     rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr lidar_pub;
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr arrow_marker_pub;
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr lidar_sub;
@@ -367,7 +369,8 @@ private:
     sensor_msgs::msg::LaserScan disparity_lidar;
     visualization_msgs::msg::Marker direction_arrow;
     // ackermann_msgs::msg::AckermannDriveStamped drive_cmd;
-    geometry_msgs::msg::TwistStamped drive_cmd;
+    geometry_msgs::msg::Twist drive_cmd; 
+    
     Eigen::MatrixXd::Index furthest_distance_index;
     float furthest_distance;
 };
