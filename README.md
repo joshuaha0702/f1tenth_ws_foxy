@@ -103,6 +103,51 @@ ros2 launch f1tenth_fgm_ros2 f1tenth_foxy_gazebo.launch.py
 
 ---
 
+# 🏁 Lattice Planner 실행 방법
+
+Clothoid 기반 Lattice 플래너를 이용해 레이스라인을 추종하는 단일 로봇 주행 모드입니다.  
+가제보 스폰 → 플래너 노드 → RViz2까지 통합 런처 한 번으로 실행할 수 있습니다.
+
+### 통합 런처 실행
+
+```bash
+ros2 launch f1tenth_lattice_ros2 f1tenth_lattice_gazebo.launch.py
+```
+
+| 파라미터 | 기본값 | 설명 |
+|---|---|---|
+| `namespace` | `car1` | 로봇 네임스페이스 |
+| `x` / `y` | `6.4` / `16.0` | 스폰 위치 (m) |
+| `yaw_deg` | `-90.0` | 스폰 초기 방향 (도) |
+
+### 주행 시작
+
+런처 실행 후 시뮬레이터와 RViz2가 열리면, **RViz2 상단의 `2D Nav Goal` 버튼을 클릭**하여 맵 위 임의의 지점을 지정합니다. 해당 신호를 수신하는 순간 차량이 주행을 시작합니다.
+
+### 레이스라인 변경
+
+`maps/` 폴더에 3개의 레인(`raceline0.csv` ~ `raceline2.csv`)이 포함되어 있습니다.  
+런처 파일(`f1tenth_lattice_gazebo.launch.py`) 내 `raceline_path` 값을 수정하여 변경합니다.
+
+```
+inner  : maps/raceline0.csv
+center : maps/raceline1.csv  ← 기본값
+outer  : maps/raceline2.csv
+```
+
+### 주요 파라미터 수정
+
+`config/lattice_config.yaml` 에서 플래너 동작을 조정할 수 있습니다.
+
+| 파라미터 | 설명 |
+|---|---|
+| `lh_grid_lb` / `lh_grid_ub` | lookahead 거리 범위 (m) |
+| `cost_weights` | 비용 함수 가중치 `[raceline추종, 속도보상, 곡률페널티, 충돌]` |
+| `traj_v_span_min/max` | 후보 궤적 속도 범위 스케일 |
+| `minL` / `maxL` | Pure Pursuit lookahead 거리 범위 |
+
+---
+
 ## 🛠 추가적인 기능 구현
 
 ### joy_teleop.py
