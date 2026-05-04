@@ -1,8 +1,9 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription
+from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 def generate_launch_description():
@@ -17,14 +18,26 @@ def generate_launch_description():
         ])
     )
 
-    # 3. FGM 노드 설정 (YAML 파라미터 포함)
+    # 3. 네임스페이스 및 FGM 노드 설정
+    # 외부에서 namespace='car1' 형태로 값을 넘겨받음.
+    namespace_arg = DeclareLaunchArgument(
+        'namespace',
+        default_value='car1',
+        description='Namespace for the FGM node'
+    )
+    namespace = LaunchConfiguration('namespace')
+
     fgm_config = os.path.join(fgm_pkg_share, 'config', 'fgm_config.yaml')
     fgm_node = Node(
         package='f1tenth_fgm_ros2',
-        executable='fgm_node', # CMakeLists의 add_executable 이름 확인!
+        executable='fgm_node',
         name='fgm_disparities',
+        namespace=namespace, # 네임스페이스 적용
         output='screen',
-        parameters=[fgm_config]
+        parameters=[
+            fgm_config, 
+            {'robot_name': namespace} # 코드 내부의 frame_id 설정 등을 위해 같이 넘겨줌
+        ]
     )
 
     # 4. RViz2 실행
@@ -39,6 +52,7 @@ def generate_launch_description():
 
     # 마스터 실행 리스트 반환
     return LaunchDescription([
+        namespace_arg,
         spawn_car_launch,
         fgm_node,
         rviz_node

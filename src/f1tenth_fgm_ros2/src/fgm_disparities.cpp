@@ -37,11 +37,12 @@ public:
         // [추가됨] 터미널에서 로봇 이름을 파라미터로 받습니다 (기본값: car1)
         std::string robot_name = this->declare_parameter("robot_name", "car1");
 
-        // [수정됨] 토픽 이름 앞에 로봇 이름을 붙여서 동적으로 생성합니다.
-        std::string drive_topic = this->declare_parameter("drive_topic", "/" + robot_name + "/drive");
-        std::string lidar_topic = this->declare_parameter("lidar_topic", "/" + robot_name + "/scan");
-        std::string lidar_pub_topic = this->declare_parameter("lidar_pub_topic", "/" + robot_name + "/disparity_lidar");
-        std::string arrow_marker_topic = this->declare_parameter("arrow_marker_topic", "/" + robot_name + "/direction_marker");
+        // [수정됨] 토픽 이름을 상대 경로(Relative Path)로 설정하여 네임스페이스가 자동 적용.
+        // 앞에 '/'가 없어야 네임스페이스(예: /car1)가 자동으로 붙음.
+        std::string drive_topic = this->declare_parameter("drive_topic", "drive");
+        std::string lidar_topic = this->declare_parameter("lidar_topic", "scan");
+        std::string lidar_pub_topic = this->declare_parameter("lidar_pub_topic", "disparity_lidar");
+        std::string arrow_marker_topic = this->declare_parameter("arrow_marker_topic", "direction_marker");
 
         car_length = this->declare_parameter("car_length", 0.33);
         car_width = this->declare_parameter("car_width", 0.20);
@@ -50,6 +51,7 @@ public:
         max_steering_angle = this->declare_parameter("max_steering_angle", 0.4189);
         disp_offset = this->declare_parameter("disp_offset", 0.1);
         carWidth_tolerance = this->declare_parameter("carWidth_tolerance", 0.4);
+        max_distance = this->declare_parameter("max_distance", 10.0);
 
         // 2. 퍼블리셔 설정 (this->create_publisher)
         drive_pub = this->create_publisher<geometry_msgs::msg::Twist>(drive_topic, 10);
@@ -93,7 +95,7 @@ public:
     disparity_lidar.time_increment = 0.0;
     disparity_lidar.scan_time = 0.0;
     disparity_lidar.range_min = 0.1;
-    disparity_lidar.range_max = 10.0;
+    disparity_lidar.range_max = max_distance;
 
     // 7. 화살표 마커 시각화 설정
     direction_arrow.pose.position.x = 0.0;
@@ -263,10 +265,10 @@ private:
             steering_angle = steering_angle;
         }
 
-        if (!std::isfinite(furthest_distance) || furthest_distance > 10.0f) {
-           furthest_distance = 10.0f;
+        if (!std::isfinite(furthest_distance) || furthest_distance > max_distance) {
+           furthest_distance = max_distance;
         }
-        speed = translate(furthest_distance, 0.0, 10.0, min_speed, max_speed); // rad per sec
+        speed = translate(furthest_distance, 0.0, max_distance, min_speed, max_speed); // rad per sec
         if(steering_angle <= 0.1 && steering_angle >= -0.1) {
             speed = speed * 95/100;
         }
@@ -354,7 +356,7 @@ private:
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr lidar_sub;
 
     // 파라미터 및 계산용 변수
-    double max_speed, min_speed, max_steering_angle;
+    double max_speed, min_speed, max_steering_angle, max_distance;
     float speed, speed_threshold;
     float car_length, car_width, theta, alpha;
     float car_arc_length, car_radius, disp_offset;
