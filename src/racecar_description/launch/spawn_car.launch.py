@@ -18,11 +18,13 @@ def generate_launch_description():
     namespace = LaunchConfiguration('namespace')
     spawn_x = LaunchConfiguration('x')
     spawn_y = LaunchConfiguration('y')
+    spawn_yaw = LaunchConfiguration('yaw')
     launch_gazebo = LaunchConfiguration('launch_gazebo') # 가제보 실행 여부 플래그
 
     declare_namespace_cmd = DeclareLaunchArgument('namespace', default_value='car1')
     declare_x_cmd = DeclareLaunchArgument('x', default_value='4.0')
     declare_y_cmd = DeclareLaunchArgument('y', default_value='2.0')
+    declare_yaw_cmd = DeclareLaunchArgument('yaw', default_value='0.0')
     declare_launch_gazebo_cmd = DeclareLaunchArgument('launch_gazebo', default_value='true')
 
     # 2. Xacro 실행 및 URDF 생성 (namespace 인자를 xacro에 전달)
@@ -60,10 +62,11 @@ def generate_launch_description():
         executable='spawn_entity.py',
         output='screen',
         arguments=[
-            '-topic', [namespace, '/robot_description'], # 네임스페이스가 붙은 정확한 토픽 지정
-            '-entity', namespace, # 충돌 방지를 위해 로봇 이름을 namespace(car1, car2)로 지정
+            '-topic', [namespace, '/robot_description'],
+            '-entity', namespace,
             '-x', spawn_x,
             '-y', spawn_y,
+            '-Y', spawn_yaw,  # Yaw 각도 (라디안, 예: 1.5708 = 90도)
             '-z', '0.05'
         ]
     )
@@ -72,6 +75,7 @@ def generate_launch_description():
         declare_namespace_cmd,
         declare_x_cmd,
         declare_y_cmd,
+        declare_yaw_cmd,
         declare_launch_gazebo_cmd,
         node_robot_state_publisher,
         gazebo,

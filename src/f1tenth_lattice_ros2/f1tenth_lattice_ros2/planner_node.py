@@ -1,0 +1,233 @@
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy
+
+import numpy as np
+import math
+
+from geometry_msgs.msg import Twist, TwistStamped
+from nav_msgs.msg import Odometry
+from visualization_msgs.msg import Marker, MarkerArray
+from std_msgs.msg import ColorRGBA
+from geometry_msgs.msg import Point, PoseStamped
+
+from f1tenth_lattice_ros2.planner_utils import load_config
+from f1tenth_lattice_ros2.lattice_planner import LatticePlanner
+
+
+def quat_to_yaw(qx, qy, qz, qw):
+    siny_cosp = 2.0 * (qw * qz + qx * qy)
+    cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz)
+    return math.atan2(siny_cosp, cosy_cosp)
+
+
+class LatticePlannerNode(Node):
+    def __init__(self):
+        super().__init__('lattice_planner')
+
+        # Parameters
+        self.declare_parameter('config_path', '')
+        self.declare_parameter('raceline_path', '')
+        self.declare_parameter('map_path', '')
+        self.declare_parameter('max_speed', 3.0)
+        self.declare_parameter('max_steering_angle', 0.4189)
+        self.declare_parameter('plan_frequency', 10.0)
+
+        config_path = self.get_parameter('config_path').value
+        raceline_path = self.get_parameter('raceline_path').value
+        map_path = self.get_parameter('map_path').value
+        self.max_speed = self.get_parameter('max_speed').value
+        self.max_steer = self.get_parameter('max_steering_angle').value
+        plan_freq = self.get_parameter('plan_frequency').value
+
+        if not config_path or not raceline_path or not map_path:
+            self.get_logger().fatal(
+                'config_path, raceline_path, map_path parameters are required'
+            )
+            raise RuntimeError('Missing required parameters')
+
+        # Initialize planner
+        self.get_logger().info(f'Loading config from: {config_path}')
+        self.get_logger().info(f'Loading raceline from: {raceline_path}')
+        self.get_logger().info(f'Loading map from: {map_path}')
+
+        conf = load_config(config_path)
+        self.planner = LatticePlanner(conf, map_path, raceline_path)
+        self.get_logger().info('Lattice planner initialized')
+
+        # Vehicle state
+        self.pose_x = 0.0
+        self.pose_y = 0.0
+        self.pose_theta = 0.0
+        self.velocity = 0.0
+        self.odom_received = False
+        self.is_active = False  # Waits for start signal
+
+        # QoS
+        qos = QoSProfile(depth=10)
+        sensor_qos = QoSProfile(depth=10)
+        sensor_qos.reliability = ReliabilityPolicy.BEST_EFFORT
+
+        # Subscriptions
+        self.odom_sub = self.create_subscription(
+            Odometry, 'odom', self._odom_callback, qos
+        )
+        self.goal_sub = self.create_subscription(
+            PoseStamped, '/goal_pose', self._goal_callback, qos
+        )
+
+        # Publishers
+        self.drive_pub = self.create_publisher(Twist, 'drive', qos)
+        self.drive_stamped_pub = self.create_publisher(TwistStamped, 'drive_stamped', qos)
+        self.raceline_pub = self.create_publisher(MarkerArray, 'raceline_marker', qos)
+        self.best_traj_pub = self.create_publisher(Marker, 'best_traj_marker', qos)
+
+        # Planning timer
+        period = 1.0 / plan_freq
+        self.timer = self.create_timer(period, self._plan_callback)
+
+        # Publish raceline visualization once after init
+        self.create_timer(2.0, self._publish_raceline_once)
+        self._raceline_published = False
+
+        self.get_logger().info(
+            f'Lattice planner node ready (plan_freq={plan_freq:.1f}Hz, '
+            f'max_speed={self.max_speed}m/s, max_steer={self.max_steer:.3f}rad)'
+        )
+
+    def _odom_callback(self, msg: Odometry):
+        self.pose_x = msg.pose.pose.position.x
+        self.pose_y = msg.pose.pose.position.y
+        q = msg.pose.pose.orientation
+        self.pose_theta = quat_to_yaw(q.x, q.y, q.z, q.w)
+        self.velocity = msg.twist.twist.linear.x
+        self.odom_received = True
+
+    def _goal_callback(self, msg: PoseStamped):
+        if not self.is_active:
+            self.get_logger().info('Start signal received from RViz (2D Nav Goal)! Starting to drive...')
+            self.is_active = True
+
+    def _plan_callback(self):
+        if not self.odom_received:
+            return
+
+        if not self.is_active:
+            # 주행 대기 상태 (2D Nav Goal 신호가 오기 전까지 멈춤)
+            drive_msg = Twist()
+            self.drive_pub.publish(drive_msg)
+            return
+
+        # No opponents in single-agent mode
+        opp_poses = np.empty((0, 3))
+
+        try:
+            best_traj, best_cost, traj_cost, abs_v_cost, collision_cost = self.planner.plan(
+                self.pose_x, self.pose_y, self.pose_theta,
+                opp_poses, self.velocity
+            )
+            self.get_logger().info(f'Trajectory cost: {traj_cost:.4f} | Abs velocity cost: {abs_v_cost:.4f} | Collision cost: {collision_cost:.4f}')
+        except Exception as e:
+            self.get_logger().warn(f'Lattice plan failed: {e}', throttle_duration_sec=2.0)
+            return
+
+        # Pure pursuit on the selected local trajectory
+        steering, speed = self.planner.tracker.plan(
+            self.pose_x, self.pose_y, self.pose_theta,
+            self.velocity, best_traj
+        )
+
+        # Clamp outputs
+        steering = float(np.clip(steering, -self.max_steer, self.max_steer))
+        speed = float(np.clip(speed, 0.0, self.max_speed))
+
+        now = self.get_clock().now().to_msg()
+
+        # Publish drive command (same format as FGM node)
+        drive_msg = Twist()
+        drive_msg.linear.x = speed
+        drive_msg.angular.z = steering
+        self.drive_pub.publish(drive_msg)
+
+        # Publish stamped version for data_logger
+        stamped_msg = TwistStamped()
+        stamped_msg.header.stamp = now
+        stamped_msg.header.frame_id = 'base_link'
+        stamped_msg.twist = drive_msg
+        self.drive_stamped_pub.publish(stamped_msg)
+
+        # Publish best trajectory visualization
+        self._publish_best_traj(best_traj, now)
+
+    def _publish_raceline_once(self):
+        if self._raceline_published:
+            return
+        self._raceline_published = True
+
+        waypoints = self.planner.waypoints
+        marker_array = MarkerArray()
+
+        line = Marker()
+        line.header.frame_id = 'map'
+        line.header.stamp = self.get_clock().now().to_msg()
+        line.ns = 'raceline'
+        line.id = 0
+        line.type = Marker.LINE_STRIP
+        line.action = Marker.ADD
+        line.scale.x = 0.05
+        line.color = ColorRGBA(r=0.0, g=1.0, b=0.0, a=0.8)
+        line.pose.orientation.w = 1.0
+
+        for wp in waypoints:
+            p = Point()
+            p.x = float(wp[0])
+            p.y = float(wp[1])
+            p.z = 0.0
+            line.points.append(p)
+        # Close loop
+        p = Point()
+        p.x = float(waypoints[0, 0])
+        p.y = float(waypoints[0, 1])
+        p.z = 0.0
+        line.points.append(p)
+
+        marker_array.markers.append(line)
+        self.raceline_pub.publish(marker_array)
+        self.get_logger().info('Raceline visualization published')
+
+    def _publish_best_traj(self, best_traj, stamp):
+        marker = Marker()
+        marker.header.frame_id = 'map'
+        marker.header.stamp = stamp
+        marker.ns = 'best_traj'
+        marker.id = 0
+        marker.type = Marker.LINE_STRIP
+        marker.action = Marker.ADD
+        marker.scale.x = 0.08
+        marker.color = ColorRGBA(r=1.0, g=0.5, b=0.0, a=0.9)
+        marker.pose.orientation.w = 1.0
+
+        for pt in best_traj:
+            p = Point()
+            p.x = float(pt[0])
+            p.y = float(pt[1])
+            p.z = 0.0
+            marker.points.append(p)
+
+        self.best_traj_pub.publish(marker)
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = LatticePlannerNode()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
