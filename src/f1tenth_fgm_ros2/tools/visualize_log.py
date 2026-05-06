@@ -236,7 +236,7 @@ def draw_car(ax, steering_rad, speed):
             (wx, wy), 0.26, 0.15,
             boxstyle="round,pad=0.04",
             linewidth=1,
-            edgecolor='#444',
+            edgecolor='#444444',
             facecolor='#1a1a1a',
             transform=transform,
             zorder=5
@@ -448,7 +448,9 @@ def draw_hist(ax, distances, max_range=10.0):
     min_d  = np.min(distances)
     ax.axvline(mean_d, color=ACCENT, linestyle='--', lw=1.2, alpha=0.8, label=f'Avg: {mean_d:.2f}m')
     ax.axvline(min_d,  color=LIDAR_NEAR, linestyle='--', lw=1.2, alpha=0.8, label=f'Min: {min_d:.2f}m')
-    legend = ax.legend(fontsize=7, framealpha=0, labelcolor=TEXT_CLR, loc='upper right')
+    legend = ax.legend(fontsize=7, framealpha=0, loc='upper right')
+    for text in legend.get_texts():
+        text.set_color(TEXT_CLR)
 
 
 def render_video(csv_path: str, output_path: str, fps: int = 20, max_frames: int = None):
@@ -466,13 +468,12 @@ def render_video(csv_path: str, output_path: str, fps: int = 20, max_frames: int
     if max_frames is not None:
         df = df.iloc[:max_frames]
 
-    # 각도 배열 생성 (라이다는 전방 0° 기준, 시계방향 -180°~+180° 전체)
-    angles_deg = np.linspace(-180, 180, n_beams, endpoint=False)
+    # 각도 배열 생성 (라이다는 전방 0° 기준, 시계방향 -135°~+135°)
+    angles_deg = np.linspace(-135, 135, n_beams)
     angles_rad = np.deg2rad(angles_deg)
 
-    # 270도 FOV 마스킹 (전방 기준 -135도 ~ +135도)
-    fov_mask = np.abs(angles_deg) <= 135.0
-    valid_angles = angles_rad[fov_mask]
+    valid_angles = angles_rad
+    valid_distances = distances
 
     n_frames = len(df)
     t0       = df['time'].iloc[0]
