@@ -1,7 +1,9 @@
 import os
+import re
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument, ExecuteProcess, TimerAction
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
@@ -90,6 +92,28 @@ def generate_launch_description():
         arguments=['0', '0', '0', '0', '0', '0', [namespace, '/laser'], 'laser']
     )
 
+    # ROS Bag 녹화 인자
+    record_arg = DeclareLaunchArgument(
+        'record',
+        default_value='false',
+        description='ROS Bag 녹화 여부 (true/false)'
+    )
+    bag_output_arg = DeclareLaunchArgument(
+        'bag_output',
+        default_value='./bags/output',
+        description='ROS Bag 저장 폴더 경로'
+    )
+
+    record_bag = ExecuteProcess(
+        condition=IfCondition(LaunchConfiguration('record')),
+        cmd=[
+            'ros2', 'bag', 'record',
+            '-o', LaunchConfiguration('bag_output'),
+            '-a',
+        ],
+        output='screen'
+    )
+
     # 가제보 정리 후 1.5초 대기 후 나머지 노드 시작
     delayed_launch = TimerAction(
         period=1.5,
@@ -99,6 +123,7 @@ def generate_launch_description():
             rviz_node,
             map_to_odom_node,
             laser_tf_node,
+            record_bag,
         ]
     )
 
@@ -107,6 +132,8 @@ def generate_launch_description():
         x_arg,
         y_arg,
         yaw_arg,
+        record_arg,
+        bag_output_arg,
         kill_gazebo,
         delayed_launch,
     ])
