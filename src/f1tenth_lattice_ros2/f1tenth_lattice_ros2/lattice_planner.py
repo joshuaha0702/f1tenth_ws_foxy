@@ -211,9 +211,12 @@ def sample_lookahead_square(pose_x, pose_y, pose_theta, velocity, waypoints,
         lh_pt, i2, t2 = intersect_point(
             np.ascontiguousarray(nearest_p), d, waypoints[:, 0:2], t + nearest_i, wrap=True
         )
-        i2 = int(i2)
-        lh_pt_theta = waypoints[i2, 3]
-        lh_pt_v = waypoints[i2, 2]
+        if i2 is None:
+            i2_int = 0 # 혹은 적절한 에러 처리
+        else:
+            i2_int = int(i2) # 명시적으로 로컬 정수 변수에 할당
+        lh_pt_theta = waypoints[i2_int, 3]
+        lh_pt_v = waypoints[i2_int, 2]
         lh_span_points = get_rotation_matrix(lh_pt_theta) @ local_span + lh_pt.reshape(2, -1)
         xy_grid = np.hstack((xy_grid, lh_span_points))
         theta_grid[i] = zero_2_2pi(lh_pt_theta)
@@ -271,14 +274,24 @@ def get_map_collision(traj, traj_clothoid, opp_poses=None, ego_pose=None,
                        prev_traj=None, dt=None, map_metainfo=None, collision_thres=0.35):
     all_traj_pts = np.ascontiguousarray(traj).reshape(-1, 5)
     collisions = map_collision(all_traj_pts[:, 0:2], dt, map_metainfo, eps=collision_thres)
-    collisions = collisions.reshape(len(traj), -1)
-    cost = []
-    for traj_collision in collisions:
-        if np.any(traj_collision):
-            cost.append(3000.0)
+    n_trajs = len(traj) 
+    collisions = collisions.reshape(n_trajs, -1)
+    cost = np.zeros(n_trajs, dtype=np.float64)
+    
+    for i in range(n_trajs):
+        # 해당 경로의 충돌 여부 확인
+        has_collision = False
+        for j in range(collisions.shape[1]):
+            if collisions[i, j]: # 하나라도 충돌이 있다면
+                has_collision = True
+                break
+
+        if has_collision:
+            cost[i] = 3000.0
         else:
-            cost.append(0.)
-    return np.array(cost)
+            cost[i] = 0.0
+
+    return cost
 
 
 @njit(cache=True)

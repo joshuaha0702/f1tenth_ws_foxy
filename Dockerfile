@@ -40,13 +40,14 @@ RUN apt-get update && apt-get install -y \
     ros-foxy-gazebo-ros-pkgs \
     && rm -rf /var/lib/apt/lists/*
 
-# 4. 학습 데이터 수집 및 분석용 파이썬 라이브러리
-# RUN pip3 install --no-cache-dir \
-#    numpy \
-#    pandas \
-#    matplotlib \
-#    scipy \
-#    bagpy
+RUN apt-get update && apt-get install -y \
+    python3-numpy \
+    python3-numba \
+    python3-scipy \
+    python3-pandas \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --no-cache-dir pyclothoids
 
 RUN sudo rosdep update --include-eol-distros || true
 
