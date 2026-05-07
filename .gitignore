@@ -4,7 +4,6 @@ build/
 log/
 src/f1tenth_system
 data/
-*.csv
 
 # Python Cache
 __pycache__/
@@ -13,6 +12,7 @@ __pycache__/
 
 # IDE and System Files
 .vscode/
+.claude/
 .DS_Store
 *.swp
 *.bak
