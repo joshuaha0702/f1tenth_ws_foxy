@@ -61,7 +61,6 @@ class LatticePlannerNode(Node):
         self.pose_theta = 0.0
         self.velocity = 0.0
         self.odom_received = False
-        self.is_active = False  # Waits for start signal
 
         # QoS
         qos = QoSProfile(depth=10)
@@ -71,9 +70,6 @@ class LatticePlannerNode(Node):
         # Subscriptions
         self.odom_sub = self.create_subscription(
             Odometry, 'odom', self._odom_callback, qos
-        )
-        self.goal_sub = self.create_subscription(
-            PoseStamped, '/goal_pose', self._goal_callback, qos
         )
 
         # Publishers
@@ -103,19 +99,8 @@ class LatticePlannerNode(Node):
         self.velocity = msg.twist.twist.linear.x
         self.odom_received = True
 
-    def _goal_callback(self, msg: PoseStamped):
-        if not self.is_active:
-            self.get_logger().info('Start signal received from RViz (2D Nav Goal)! Starting to drive...')
-            self.is_active = True
-
     def _plan_callback(self):
         if not self.odom_received:
-            return
-
-        if not self.is_active:
-            # 주행 대기 상태 (2D Nav Goal 신호가 오기 전까지 멈춤)
-            drive_msg = Twist()
-            self.drive_pub.publish(drive_msg)
             return
 
         # No opponents in single-agent mode
