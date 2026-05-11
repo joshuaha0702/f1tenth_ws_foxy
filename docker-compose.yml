@@ -14,5 +14,6 @@ services:
       - ./src:/root/f1tenth_ws/src
       - /dev/input:/dev/input
       - ./bags:/root/f1tenth_ws/bags
+      - ./f1tenth_data:/root/f1tenth_ws/f1tenth_data
     stdin_open: true
     tty: true

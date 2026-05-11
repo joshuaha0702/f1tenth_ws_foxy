@@ -47,7 +47,7 @@ RUN apt-get update && apt-get install -y \
     python3-pandas \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install --no-cache-dir pyclothoids
+RUN pip3 install --no-cache-dir pyclothoids rosbags
 
 RUN sudo rosdep update --include-eol-distros || true
 
@@ -55,6 +55,7 @@ RUN sudo rosdep update --include-eol-distros || true
 RUN echo "source /opt/ros/foxy/setup.bash" >> /root/.bashrc \
     && echo "alias cb='cd /root/f1tenth_ws && colcon build --symlink-install && source /root/f1tenth_ws/install/setup.bash'" >> /root/.bashrc \
     && echo "alias cs='source /root/f1tenth_ws/install/setup.bash'" >> /root/.bashrc \
+    && echo "alias extract='python3 /root/f1tenth_ws/src/f1tenth_lattice_ros2/tools/extract_bag_csv.py'" >> /root/.bashrc \
     && echo "export ROS_DOMAIN_ID=1" >> /root/.bashrc
 
 WORKDIR /root/f1tenth_ws

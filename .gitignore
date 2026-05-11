@@ -20,5 +20,6 @@ __pycache__/
 # Temporary files
 .python_history
 
-# rosbag
+# data
 bags/
+f1tenth_data/
