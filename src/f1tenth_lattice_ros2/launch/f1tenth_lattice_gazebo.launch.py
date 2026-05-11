@@ -107,9 +107,26 @@ def generate_launch_description():
     record_bag = ExecuteProcess(
         condition=IfCondition(LaunchConfiguration('record')),
         cmd=[
-            'ros2', 'bag', 'record',
-            '-o', LaunchConfiguration('bag_output'),
-            '-a',
+            'bash', '-c',
+            'python3 -c "'
+            'import rclpy\n'
+            'from rclpy.node import Node\n'
+            'from geometry_msgs.msg import Twist\n'
+            'rclpy.init()\n'
+            'node = Node(\\\"_bag_trigger\\\")\n'
+            'done = [False]\n'
+            'def cb(msg): done[0] = True\n'
+            'node.create_subscription(Twist, \\\"/$1/drive\\\", cb, 10)\n'
+            'print(\\\"[bag] Waiting for first drive command...\\\", flush=True)\n'
+            'while not done[0]: rclpy.spin_once(node, timeout_sec=0.1)\n'
+            'node.destroy_node(); rclpy.shutdown()\n'
+            '" && '
+            'echo "[bag] Drive started — starting bag recording" && '
+            'mkdir -p "$(dirname "$2")" && '
+            'ros2 bag record -o "$2" -a',
+            '--',
+            namespace,
+            LaunchConfiguration('bag_output'),
         ],
         output='screen'
     )

@@ -111,7 +111,7 @@ class LatticePlannerNode(Node):
                 self.pose_x, self.pose_y, self.pose_theta,
                 opp_poses, self.velocity
             )
-            self.get_logger().info(f'Trajectory cost: {traj_cost:.4f} | Abs velocity cost: {abs_v_cost:.4f} | Collision cost: {collision_cost:.4f}')
+            # self.get_logger().info(f'Trajectory cost: {traj_cost:.4f} | Abs velocity cost: {abs_v_cost:.4f} | Collision cost: {collision_cost:.4f}')
         except Exception as e:
             self.get_logger().warn(f'Lattice plan failed: {e}', throttle_duration_sec=2.0)
             return
