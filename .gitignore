@@ -19,4 +19,6 @@ __pycache__/
 
 # Temporary files
 .python_history
-.vscode/
+
+# rosbag
+bags/

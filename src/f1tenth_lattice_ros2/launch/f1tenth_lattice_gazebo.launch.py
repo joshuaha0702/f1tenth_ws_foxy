@@ -188,8 +188,10 @@ def generate_launch_description():
             'node.destroy_node(); rclpy.shutdown()\n'
             '" && '
             'echo "[bag] Drive started — starting bag recording" && '
-            'mkdir -p "$(dirname "$2")" && '
-            'ros2 bag record -o "$2" -a',
+            'TIME_STAMP=$(date -d "+9 hours" +%Y%m%d_%H%M%S) && '
+            'BAG_PATH="${2}_${TIME_STAMP}" && '
+            'mkdir -p "$(dirname "$BAG_PATH")" && '
+            'ros2 bag record -o "$BAG_PATH" -a',
             '--',
             namespace,
             LaunchConfiguration('bag_output'),
