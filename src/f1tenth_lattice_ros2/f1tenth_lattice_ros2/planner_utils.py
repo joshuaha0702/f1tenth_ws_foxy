@@ -316,7 +316,12 @@ def get_actuation_PD(pose_theta, lookahead_point, position, lookahead_distance, 
     return speed, steering_angle, error
 
 
-def load_config(config_path):
+def load_config(config_path, namespace=None):
     with open(config_path) as f:
         config_dict = yaml.full_load(f)
-    return Namespace(**config_dict)
+    # global defaults: top-level keys that are not namespace sections (dicts)
+    conf = {k: v for k, v in config_dict.items() if not isinstance(v, dict)}
+    # apply namespace-specific overrides if present
+    if namespace and namespace in config_dict:
+        conf.update(config_dict[namespace])
+    return Namespace(**conf)

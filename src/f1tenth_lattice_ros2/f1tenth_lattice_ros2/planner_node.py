@@ -32,6 +32,7 @@ class LatticePlannerNode(Node):
         self.declare_parameter('max_speed', 3.0)
         self.declare_parameter('max_steering_angle', 0.4189)
         self.declare_parameter('plan_frequency', 10.0)
+        self.declare_parameter('opponent_namespace', '')
 
         config_path = self.get_parameter('config_path').value
         raceline_path = self.get_parameter('raceline_path').value
@@ -39,6 +40,7 @@ class LatticePlannerNode(Node):
         self.max_speed = self.get_parameter('max_speed').value
         self.max_steer = self.get_parameter('max_steering_angle').value
         plan_freq = self.get_parameter('plan_frequency').value
+        opponent_ns = self.get_parameter('opponent_namespace').value
 
         if not config_path or not raceline_path or not map_path:
             self.get_logger().fatal(
@@ -51,7 +53,8 @@ class LatticePlannerNode(Node):
         self.get_logger().info(f'Loading raceline from: {raceline_path}')
         self.get_logger().info(f'Loading map from: {map_path}')
 
-        conf = load_config(config_path)
+        ns = self.get_namespace().strip('/')
+        conf = load_config(config_path, namespace=ns)
         self.planner = LatticePlanner(conf, map_path, raceline_path)
         self.get_logger().info('Lattice planner initialized')
 
@@ -62,6 +65,9 @@ class LatticePlannerNode(Node):
         self.velocity = 0.0
         self.odom_received = False
 
+        # Opponent state (head-to-head mode)
+        self.opp_pose = np.empty((0, 3))
+
         # QoS
         qos = QoSProfile(depth=10)
         sensor_qos = QoSProfile(depth=10)
@@ -71,6 +77,11 @@ class LatticePlannerNode(Node):
         self.odom_sub = self.create_subscription(
             Odometry, 'odom', self._odom_callback, qos
         )
+        if opponent_ns:
+            self.create_subscription(
+                Odometry, f'/{opponent_ns}/odom', self._opp_odom_callback, qos
+            )
+            self.get_logger().info(f'Head-to-head mode: tracking opponent /{opponent_ns}/odom')
 
         # Publishers
         self.drive_pub = self.create_publisher(Twist, 'drive', qos)
@@ -99,12 +110,18 @@ class LatticePlannerNode(Node):
         self.velocity = msg.twist.twist.linear.x
         self.odom_received = True
 
+    def _opp_odom_callback(self, msg: Odometry):
+        x = msg.pose.pose.position.x
+        y = msg.pose.pose.position.y
+        q = msg.pose.pose.orientation
+        theta = quat_to_yaw(q.x, q.y, q.z, q.w)
+        self.opp_pose = np.array([[x, y, theta]])
+
     def _plan_callback(self):
         if not self.odom_received:
             return
 
-        # No opponents in single-agent mode
-        opp_poses = np.empty((0, 3))
+        opp_poses = self.opp_pose
 
         try:
             best_traj, best_cost, traj_cost, abs_v_cost, collision_cost = self.planner.plan(

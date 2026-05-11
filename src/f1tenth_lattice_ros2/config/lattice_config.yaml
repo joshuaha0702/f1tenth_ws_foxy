@@ -1,13 +1,4 @@
-# Lattice Planner Parameters
-lh_grid_lb: 1.0
-lh_grid_ub: 3.0
-traj_points: 10
-traj_v_scale: 1.0
-traj_v_span_min: 0.1
-traj_v_span_max: 1.0
-traj_v_span_num: 19
-
-# Cost function flags
+# === Global defaults ===
 get_follow_optim_cost: true
 get_map_collision: true
 get_similarity_cost: true
@@ -15,7 +6,6 @@ weights_num: 4
 ittc_thres: 3.0
 scan_num: 144
 
-# Cost weight parameter names (for internal parameter indexing)
 params_num:
   - 1
   - 4
@@ -23,18 +13,9 @@ params_name:
   - traj_v_scale
   - cost_weights
 
-# Cost weights: [follow_optim, abs_speed_reward, curvature_speed_punish, opponent_collision]
-cost_weights:
-  - 0.001
-  - 10.0
-  - 0.003
-  - 300.0
-
-# Tracker (Pure Pursuit) configuration
 tracker_steps: 10
 vel_scale: 1.0
 
-# Pure Pursuit lookahead and gain
 minL: 0.2
 maxL: 1.8
 Lscale: 8.0
@@ -44,7 +25,58 @@ Pscale: 8.0
 D: 0.2
 interpScale: 10
 
-# Waypoint column indices in reordered array (x=0, y=1, v=2, heading=3, s=4)
 wpt_xind: 0
 wpt_yind: 1
 wpt_vind: 2
+
+# === Ego vehicle ===
+car1:
+  lh_grid_lb: 1.0
+  lh_grid_ub: 3.0
+  traj_points: 10
+  traj_v_scale: 1.0
+  traj_v_span_min: 0.1
+  traj_v_span_max: 1.0
+  traj_v_span_num: 19
+
+  spawn:
+    x: 6.4
+    y: 16.0
+    yaw_deg: -90.0
+  cost_weights:
+    - 0.001
+    - 10.0
+    - 0.003
+    - 300.0
+  minL: 0.2
+  maxL: 1.8
+  Lscale: 8.0
+  minP: 0.5
+  maxP: 0.8
+  
+
+# === Opponent vehicle ===
+car2:
+  lh_grid_lb: 1.0
+  lh_grid_ub: 2.0
+  traj_points: 10
+  traj_v_scale: 0.5
+  traj_v_span_min: 0.1
+  traj_v_span_max: 1.0
+  traj_v_span_num: 19
+
+  spawn:
+    x: 6.4
+    y: 12.0
+    yaw_deg: -90.0
+  cost_weights:
+    - 0.10
+    - 10.0
+    - 0.003
+    - 0.0
+  minL: 0.2
+  maxL: 1.8
+  Lscale: 8.0
+  minP: 0.5
+  maxP: 0.8
+
