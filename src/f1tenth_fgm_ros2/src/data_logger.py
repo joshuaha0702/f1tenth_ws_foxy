@@ -88,17 +88,25 @@ class DataLogger(Node):
 
     def drive_callback(self, msg):
         drive_stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-        if drive_stamp not in self.scan_buffer:
-            return  
 
-        timestamp, reduced_ranges = self.scan_buffer.pop(drive_stamp)
-        
-        # [복구됨] CSV 행 데이터 맨 앞에 현재 lap_count를 넣습니다.
-        row = [self.lap_count, timestamp, msg.twist.angular.z, msg.twist.linear.x] + reduced_ranges
+        # Nearest-past match: scan with the largest stamp <= drive_stamp
+        candidate_keys = [k for k in self.scan_buffer if k <= drive_stamp]
+        if not candidate_keys:
+            return
+
+        matched_key = max(candidate_keys)
+
+        # Drop if the matched scan is too stale (sanity guard)
+        if drive_stamp - matched_key > 0.05:
+            return
+
+        _, reduced_ranges = self.scan_buffer[matched_key]
+
+        row = [self.lap_count, drive_stamp, msg.twist.angular.z, msg.twist.linear.x] + reduced_ranges
         self.csv_writer.writerow(row)
 
-        # 버퍼 정리
-        stale_keys = [k for k in self.scan_buffer if k < drive_stamp]
+        # Drop everything up to and including the matched scan
+        stale_keys = [k for k in self.scan_buffer if k <= matched_key]
         for k in stale_keys:
             self.scan_buffer.pop(k)
 

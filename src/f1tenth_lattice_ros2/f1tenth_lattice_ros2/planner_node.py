@@ -64,6 +64,7 @@ class LatticePlannerNode(Node):
         self.pose_theta = 0.0
         self.velocity = 0.0
         self.odom_received = False
+        self.latest_odom_stamp = None
 
         # Opponent state (head-to-head mode)
         self.opp_pose = np.empty((0, 3))
@@ -108,6 +109,7 @@ class LatticePlannerNode(Node):
         q = msg.pose.pose.orientation
         self.pose_theta = quat_to_yaw(q.x, q.y, q.z, q.w)
         self.velocity = msg.twist.twist.linear.x
+        self.latest_odom_stamp = msg.header.stamp
         self.odom_received = True
 
     def _opp_odom_callback(self, msg: Odometry):
@@ -152,8 +154,9 @@ class LatticePlannerNode(Node):
         self.drive_pub.publish(drive_msg)
 
         # Publish stamped version for data_logger
+        # Stamp matches the odom used for this plan so data_logger can match scan by stamp.
         stamped_msg = TwistStamped()
-        stamped_msg.header.stamp = now
+        stamped_msg.header.stamp = self.latest_odom_stamp
         stamped_msg.header.frame_id = 'base_link'
         stamped_msg.twist = drive_msg
         self.drive_stamped_pub.publish(stamped_msg)
