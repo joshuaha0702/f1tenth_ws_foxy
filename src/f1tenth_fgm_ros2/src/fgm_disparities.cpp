@@ -95,21 +95,46 @@ private:
     void lidar_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg) {
         auto start = this->now();
         int size = msg->ranges.size();
+        
+        // 입력 데이터 크기에 맞춰 행렬 리사이즈 및 초기화
+        if (range_matrix.rows() != size) {
+            range_matrix.resize(size, 3);
+        }
+        range_matrix.setZero();
+
         float starting_angle = msg->angle_min;
         float angle_increment = msg->angle_increment;
-        float angle = starting_angle + 180*angle_increment;
+        
+        // 각도 기반 인덱스 계산 (-90도 ~ +90도 범위)
+        int start_index = static_cast<int>((-1.5708f - starting_angle) / angle_increment);
+        int stop_index = static_cast<int>((1.5708f - starting_angle) / angle_increment);
+        
+        // 인덱스 안전 범위 제한
+        start_index = std::max(0, std::min(start_index, size - 1));
+        stop_index = std::max(0, std::min(stop_index, size - 2)); // i+1 접근을 위해 -2
+
+        float angle = starting_angle + start_index * angle_increment;
         float angle_stopper = 0;
-        int stop_index = 900;
-        int i = 180;
+        int i = start_index;
         double right_hs, left_hs;
+        after_LD = false;
 
         while(i <= stop_index) {
             right_hs = msg->ranges[i+1];
             left_hs = msg->ranges[i];
+
+            // 유효하지 않은 데이터 처리 (Inf, NaN)
+            if (!std::isfinite(left_hs)) left_hs = max_distance;
+            if (!std::isfinite(right_hs)) right_hs = max_distance;
+
             if(right_hs - left_hs > 0.15) {
                 range_matrix(i,2) = 1;
                 range_matrix(i,0) = left_hs;
-                car_arc_length = 2 * left_hs * std::asin(chord_length/(2*left_hs));
+                
+                float asin_arg = chord_length / (2.0f * left_hs);
+                if (asin_arg > 1.0f) asin_arg = 1.0f;
+                car_arc_length = 2.0f * left_hs * std::asin(asin_arg);
+                
                 alpha = (car_arc_length) / left_hs;
                 angle_stopper = 0;
                 while(angle_stopper <= alpha && i + 1 < size) {
@@ -118,12 +143,16 @@ private:
                     angle_stopper += angle_increment;
                     angle += angle_increment;
                     i++;
-                    range_matrix(i,2) = 9;
+                    if (i < size) range_matrix(i, 2) = 9;
                 }
             }
             else if(left_hs - right_hs > 0.15) {
-                range_matrix(i+1,2) = 2;
-                car_arc_length = 2 * right_hs * std::asin(chord_length/(2*right_hs));
+                if (i + 1 < size) range_matrix(i+1,2) = 2;
+                
+                float asin_arg = chord_length / (2.0f * right_hs);
+                if (asin_arg > 1.0f) asin_arg = 1.0f;
+                car_arc_length = 2.0f * right_hs * std::asin(asin_arg);
+
                 alpha = (car_arc_length) / right_hs;
                 angle_stopper = 0;
                 int j = i;
@@ -139,7 +168,7 @@ private:
                 after_LD = true;
             }
             else {
-                range_matrix(i,0) = msg->ranges[i];
+                range_matrix(i,0) = left_hs;
                 range_matrix(i,1) = angle;
                 if(after_LD) {
                     range_matrix(i,2) = 2;
@@ -153,11 +182,18 @@ private:
             }
         }
         
-        i = 0;
-        while(i < size) {
-            disparity_lidar.ranges[i] = range_matrix(i,0);
-            disparity_lidar.intensities[i] = range_matrix(i,1);
-            i++;
+        // 가상 라이다 데이터 준비
+        if (disparity_lidar.ranges.size() != static_cast<size_t>(size)) {
+            disparity_lidar.ranges.resize(size);
+            disparity_lidar.intensities.resize(size);
+        }
+        disparity_lidar.angle_min = msg->angle_min;
+        disparity_lidar.angle_max = msg->angle_max;
+        disparity_lidar.angle_increment = msg->angle_increment;
+
+        for (int k = 0; k < size; ++k) {
+            disparity_lidar.ranges[k] = range_matrix(k,0);
+            disparity_lidar.intensities[k] = range_matrix(k,1);
         }
 
         furthest_distance = range_matrix.col(0).maxCoeff(&furthest_distance_index);
@@ -196,9 +232,6 @@ private:
         arrow_marker_pub->publish(direction_arrow);
         drive_pub->publish(drive_cmd);
         lidar_pub->publish(disparity_lidar);
-
-        auto end = this->now();
-        auto elapsed = (end - start).seconds();
     }
 
     // [하드웨어 호환성] 퍼블리셔 타입을 Ackermann 타입으로 변경

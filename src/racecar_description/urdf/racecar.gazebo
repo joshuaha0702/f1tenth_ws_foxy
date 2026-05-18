@@ -27,7 +27,7 @@
           <remapping>cmd_vel:=drive_twist</remapping>
           <remapping>odom:=odom</remapping>
         </ros>
-        <update_rate>1000.0</update_rate>
+        <update_rate>100.0</update_rate>
         <front_left_joint>left_front_wheel_joint</front_left_joint>
         <front_right_joint>right_front_wheel_joint</front_right_joint>
         <rear_left_joint>left_rear_wheel_joint</rear_left_joint>
@@ -81,7 +81,7 @@
     <gazebo reference="laser">
       <sensor type="ray" name="hokuyo_sensor">
         <visualize>true</visualize>
-        <update_rate>200</update_rate>
+        <update_rate>30</update_rate>
         <ray>
           <scan><horizontal><samples>1081</samples><min_angle>-2.356</min_angle><max_angle>2.356</max_angle></horizontal></scan>
           <range><min>0.1</min><max>10.0</max></range>
