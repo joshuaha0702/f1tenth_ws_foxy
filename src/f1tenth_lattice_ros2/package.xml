@@ -12,6 +12,7 @@
   <depend>nav_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>visualization_msgs</depend>
+  <depend>ackermann_msgs</depend>
 
   <build_depend>ament_cmake_python</build_depend>
   <build_depend>ament_cmake</build_depend>

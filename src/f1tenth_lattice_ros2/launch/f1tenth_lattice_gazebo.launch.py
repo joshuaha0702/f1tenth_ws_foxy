@@ -103,6 +103,15 @@ def generate_launch_description():
         }]
     )
 
+    # Ackermann to Twist Bridge — car1
+    bridge_node = Node(
+        package='f1tenth_fgm_ros2',
+        executable='ackermann_to_twist.py',
+        name='ackermann_to_twist',
+        namespace='car1',
+        output='screen'
+    )
+
     # Lattice planner node — car2 (head2head only)
     lattice_node_car2 = Node(
         package='f1tenth_lattice_ros2',
@@ -119,6 +128,15 @@ def generate_launch_description():
             'plan_frequency': 10.0,
             'opponent_namespace': 'car1',
         }]
+    )
+
+    # Ackermann to Twist Bridge — car2
+    bridge_node_car2 = Node(
+        package='f1tenth_fgm_ros2',
+        executable='ackermann_to_twist.py',
+        name='ackermann_to_twist',
+        namespace='car2',
+        output='screen'
     )
 
     # RViz2 with existing config
@@ -177,12 +195,12 @@ def generate_launch_description():
             'python3 -c "'
             'import rclpy\n'
             'from rclpy.node import Node\n'
-            'from geometry_msgs.msg import Twist\n'
+            'from ackermann_msgs.msg import AckermannDriveStamped\n'
             'rclpy.init()\n'
             'node = Node(\\\"_bag_trigger\\\")\n'
             'done = [False]\n'
             'def cb(msg): done[0] = True\n'
-            'node.create_subscription(Twist, \\\"/$1/drive\\\", cb, 10)\n'
+            'node.create_subscription(AckermannDriveStamped, \\\"/$1/drive\\\", cb, 10)\n'
             'print(\\\"[bag] Waiting for first drive command...\\\", flush=True)\n'
             'while not done[0]: rclpy.spin_once(node, timeout_sec=0.1)\n'
             'node.destroy_node(); rclpy.shutdown()\n'
@@ -204,6 +222,7 @@ def generate_launch_description():
         actions=[
             spawn_car2_launch,
             lattice_node_car2,
+            bridge_node_car2,
             map_to_odom_node_car2,
             laser_tf_node_car2,
         ]
@@ -215,6 +234,7 @@ def generate_launch_description():
         actions=[
             spawn_car_launch,
             lattice_node,
+            bridge_node,
             rviz_node,
             map_to_odom_node,
             laser_tf_node,

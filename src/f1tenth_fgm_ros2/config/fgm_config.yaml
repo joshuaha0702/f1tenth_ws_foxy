@@ -13,5 +13,5 @@
     min_speed: 0.5
     max_steering_angle: 0.4189 # 약 24도
     disp_offset: 0.1
-    carWidth_tolerance: 0.4
+    carWidth_tolerance: 2
     max_distance: 10.0 # 라이다 가시거리 (기본 10.0m)

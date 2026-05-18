@@ -40,8 +40,16 @@ def generate_launch_description():
         ]
     )
 
-    # 4. RViz2 실행
-    # (팁: 나중에 저장된 .rviz 설정파일이 생기면 인자로 추가할 수 있습니다)
+    # 4. Ackermann to Twist Bridge (Gazebo 시뮬레이션용)
+    bridge_node = Node(
+        package='f1tenth_fgm_ros2',
+        executable='ackermann_to_twist.py',
+        name='ackermann_to_twist',
+        namespace=namespace,
+        output='screen'
+    )
+
+    # 5. RViz2 실행
     rviz_node = Node(
         package='rviz2',
         executable='rviz2',
@@ -55,5 +63,6 @@ def generate_launch_description():
         namespace_arg,
         spawn_car_launch,
         fgm_node,
+        bridge_node,
         rviz_node
     ])

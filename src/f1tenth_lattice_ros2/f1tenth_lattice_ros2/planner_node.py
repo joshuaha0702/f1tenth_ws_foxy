@@ -10,6 +10,8 @@ from nav_msgs.msg import Odometry
 from visualization_msgs.msg import Marker, MarkerArray
 from std_msgs.msg import ColorRGBA
 from geometry_msgs.msg import Point, PoseStamped
+# [하드웨어 호환성] 실제 차량 구동을 위한 Ackermann 메시지 임포트
+from ackermann_msgs.msg import AckermannDriveStamped
 
 from f1tenth_lattice_ros2.planner_utils import load_config
 from f1tenth_lattice_ros2.lattice_planner import LatticePlanner
@@ -71,8 +73,6 @@ class LatticePlannerNode(Node):
 
         # QoS
         qos = QoSProfile(depth=10)
-        sensor_qos = QoSProfile(depth=10)
-        sensor_qos.reliability = ReliabilityPolicy.BEST_EFFORT
 
         # Subscriptions
         self.odom_sub = self.create_subscription(
@@ -84,9 +84,8 @@ class LatticePlannerNode(Node):
             )
             self.get_logger().info(f'Head-to-head mode: tracking opponent /{opponent_ns}/odom')
 
-        # Publishers
-        self.drive_pub = self.create_publisher(Twist, 'drive', qos)
-        self.drive_stamped_pub = self.create_publisher(TwistStamped, 'drive_stamped', qos)
+        # [하드웨어 호환성] 퍼블리셔를 AckermannDriveStamped 타입으로 변경 (실제 차량 VESC 대응)
+        self.drive_pub = self.create_publisher(AckermannDriveStamped, 'drive', qos)
         self.raceline_pub = self.create_publisher(MarkerArray, 'raceline_marker', qos)
         self.best_traj_pub = self.create_publisher(Marker, 'best_traj_marker', qos)
 
@@ -130,7 +129,6 @@ class LatticePlannerNode(Node):
                 self.pose_x, self.pose_y, self.pose_theta,
                 opp_poses, self.velocity
             )
-            # self.get_logger().info(f'Trajectory cost: {traj_cost:.4f} | Abs velocity cost: {abs_v_cost:.4f} | Collision cost: {collision_cost:.4f}')
         except Exception as e:
             self.get_logger().warn(f'Lattice plan failed: {e}', throttle_duration_sec=2.0)
             return
@@ -147,19 +145,13 @@ class LatticePlannerNode(Node):
 
         now = self.get_clock().now().to_msg()
 
-        # Publish drive command (same format as FGM node)
-        drive_msg = Twist()
-        drive_msg.linear.x = speed
-        drive_msg.angular.z = steering
+        # [하드웨어 호환성] Ackermann 메시지 생성 및 필드 할당 (Twist 대신 직접 필드 사용)
+        drive_msg = AckermannDriveStamped()
+        drive_msg.header.stamp = self.latest_odom_stamp if self.latest_odom_stamp else now
+        drive_msg.header.frame_id = 'base_link'
+        drive_msg.drive.speed = speed
+        drive_msg.drive.steering_angle = steering
         self.drive_pub.publish(drive_msg)
-
-        # Publish stamped version for data_logger
-        # Stamp matches the odom used for this plan so data_logger can match scan by stamp.
-        stamped_msg = TwistStamped()
-        stamped_msg.header.stamp = self.latest_odom_stamp
-        stamped_msg.header.frame_id = 'base_link'
-        stamped_msg.twist = drive_msg
-        self.drive_stamped_pub.publish(stamped_msg)
 
         # Publish best trajectory visualization
         self._publish_best_traj(best_traj, now)

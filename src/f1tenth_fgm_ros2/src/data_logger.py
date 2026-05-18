@@ -102,7 +102,8 @@ class DataLogger(Node):
 
         _, reduced_ranges = self.scan_buffer[matched_key]
 
-        row = [self.lap_count, drive_stamp, msg.twist.angular.z, msg.twist.linear.x] + reduced_ranges
+        # Ackermann 메시지에서 속도와 조향각 추출
+        row = [self.lap_count, drive_stamp, msg.drive.steering_angle, msg.drive.speed] + reduced_ranges
         self.csv_writer.writerow(row)
 
         # Drop everything up to and including the matched scan

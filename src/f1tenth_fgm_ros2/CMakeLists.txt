@@ -43,6 +43,7 @@ install(PROGRAMS
   src/joy_teleop.py
   src/data_logger.py
   src/random_reset.py
+  src/ackermann_to_twist.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

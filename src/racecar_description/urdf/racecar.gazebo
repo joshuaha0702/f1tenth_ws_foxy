@@ -24,7 +24,7 @@
       <plugin name="gazebo_ros_ackermann_drive" filename="libgazebo_ros_ackermann_drive.so">
         <ros>
           <namespace>${namespace}</namespace>
-          <remapping>cmd_vel:=drive</remapping>
+          <remapping>cmd_vel:=drive_twist</remapping>
           <remapping>odom:=odom</remapping>
         </ros>
         <update_rate>1000.0</update_rate>
