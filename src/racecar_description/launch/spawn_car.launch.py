@@ -20,17 +20,18 @@ def generate_launch_description():
     spawn_y = LaunchConfiguration('y')
     spawn_yaw = LaunchConfiguration('yaw')
     launch_gazebo = LaunchConfiguration('launch_gazebo') # 가제보 실행 여부 플래그
+    color = LaunchConfiguration('color')
 
     declare_namespace_cmd = DeclareLaunchArgument('namespace', default_value='car1')
     declare_x_cmd = DeclareLaunchArgument('x', default_value='4.0')
     declare_y_cmd = DeclareLaunchArgument('y', default_value='2.0')
     declare_yaw_cmd = DeclareLaunchArgument('yaw', default_value='0.0')
     declare_launch_gazebo_cmd = DeclareLaunchArgument('launch_gazebo', default_value='true')
+    declare_color_cmd = DeclareLaunchArgument('color', default_value='blue')
 
-    # 2. Xacro 실행 및 URDF 생성 (namespace 인자를 xacro에 전달)
-    # Command를 사용하여 런타임에 namespace 값이 반영된 URDF를 생성합니다.
+    # 2. Xacro 실행 및 URDF 생성 (namespace, color 인자를 xacro에 전달)
     robot_description_content = ParameterValue(
-        Command(['xacro ', xacro_file, ' namespace:=', namespace]),
+        Command(['xacro ', xacro_file, ' namespace:=', namespace, ' color:=', color]),
         value_type=str
     )
 
@@ -77,6 +78,7 @@ def generate_launch_description():
         declare_y_cmd,
         declare_yaw_cmd,
         declare_launch_gazebo_cmd,
+        declare_color_cmd,
         node_robot_state_publisher,
         gazebo,
         spawn_entity

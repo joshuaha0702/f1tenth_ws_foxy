@@ -76,6 +76,7 @@ def generate_launch_description():
             'namespace': 'car2',
             'x': spawn_x2, 'y': spawn_y2, 'yaw': spawn_yaw2,
             'launch_gazebo': 'false',
+            'color': 'orange',
         }.items()
     )
 
