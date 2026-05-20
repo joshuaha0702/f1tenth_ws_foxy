@@ -4,14 +4,16 @@
   <xacro:include filename="$(find racecar_description)/urdf/macros.xacro" />
   <xacro:include filename="$(find racecar_description)/urdf/racecar.gazebo" />
   <xacro:arg name="namespace" default="" />
-  
+  <xacro:arg name="color" default="blue" />
+  <xacro:property name="chassis_color" value="$(arg color)" />
+
   <xacro:racecar_gazebo namespace="$(arg namespace)" />
 
   <!-- 1. 기본 링크 설정 -->
   <link name="base_link" />
 
   <link name="chassis">
-    <visual><xacro:chassis_geometry/><material name="blue" /></visual>
+    <visual><xacro:chassis_geometry/><material name="${chassis_color}" /></visual>
   </link>
 
   <joint name="base_link_joint" type="fixed">
