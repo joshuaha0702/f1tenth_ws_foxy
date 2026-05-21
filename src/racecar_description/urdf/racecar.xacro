@@ -14,18 +14,27 @@
 
   <link name="chassis">
     <visual><xacro:chassis_geometry/><material name="${chassis_color}" /></visual>
+    <!-- 차체 외곽 박스: 라이다 광선 평면(z=0.075)보다 낮게 두어 라이다를 막지 않도록 함.
+         크기는 실제 F1tenth 외형(약 0.55 x 0.28 m)에 근사. -->
+    <collision name="chassis_collision">
+      <origin xyz="0.16 0 0.01" rpy="0 0 0"/>
+      <geometry><box size="0.55 0.28 0.05"/></geometry>
+    </collision>
+    <!-- collision 박스 시각화용 (충돌 형상 확인 디버깅) -->
+    <visual name="chassis_collision_visual">
+      <origin xyz="0.16 0 0.01" rpy="0 0 0"/>
+      <geometry><box size="0.55 0.28 0.05"/></geometry>
+      <material name="collision_box_debug">
+        <color rgba="1.0 0.2 0.2 0.35"/>
+      </material>
+    </visual>
+    <!-- chassis에 직접 실제 inertial 부여 → fixed-joint lumping 방지
+         (이전에는 별도 chassis_inertia link에 있었음) -->
+    <inertial><xacro:chassis_inertial_params /></inertial>
   </link>
 
   <joint name="base_link_joint" type="fixed">
     <origin xyz="0 0 0.05" rpy="0 0 0" /><parent link="base_link" /><child link="chassis" />
-  </joint>
-
-  <link name="chassis_inertia">
-    <inertial><xacro:chassis_inertial_params /></inertial>
-  </link>
-
-  <joint name="chassis_inertia_joint" type="fixed">
-    <origin xyz="0 0 0" rpy="0 0 0" /><parent link="chassis" /><child link="chassis_inertia" />
   </joint>
 
   <!-- 2. 뒷바퀴 설정 (구동축) -->
@@ -99,7 +108,8 @@
   <!-- 4. 기타 센서 (레이저, 카메라) -->
   <link name="laser">
     <inertial><xacro:hokuyo_inertial_params /></inertial>
-    <collision><origin xyz="0 0 0"/><geometry><box size="0.1 0.1 0.1"/></geometry></collision>
+    <!-- 라이다 collision은 차량 간 접근을 가로막지 않도록 작게 (4cm 큐브) -->
+    <collision><origin xyz="0 0 0"/><geometry><box size="0.04 0.04 0.04"/></geometry></collision>
     <visual><origin xyz="0 0 0"/><geometry><mesh filename="package://racecar_description/meshes/hokuyo.dae"/></geometry></visual>
   </link>
   <joint name="hokuyo_joint" type="fixed">

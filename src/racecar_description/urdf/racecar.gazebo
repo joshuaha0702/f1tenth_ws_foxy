@@ -5,12 +5,31 @@
   <xacro:macro name="racecar_gazebo" params="namespace">
     <!-- Chassis physics -->
     <gazebo reference="chassis">
+      <!-- sdformat이 fixed joint를 강제 lump하는 동작을 막아 chassis link를 SDF에 보존.
+           이게 없으면 chassis가 base_link로 합쳐지며 collision 이름과 sensor parent가
+           모두 변형되어 contact sensor가 동작하지 않음. -->
+      <disableFixedJointLumping>true</disableFixedJointLumping>
+      <preserveFixedJoint>true</preserveFixedJoint>
       <mu1 value="0.0"/>
       <mu2 value="0.0"/>
       <kp value="10000000.0" />
       <kd value="1.0" />
       <minDepth>0.001</minDepth>
       <material>Gazebo/Blue</material>
+      <sensor name="chassis_contact_sensor" type="contact">
+        <always_on>true</always_on>
+        <update_rate>50</update_rate>
+        <contact>
+          <!-- sdformat은 URDF의 <collision name="X">를 X_collision으로 변환 -->
+          <collision>chassis_collision_collision</collision>
+        </contact>
+        <plugin name="chassis_bumper" filename="libgazebo_ros_bumper.so">
+          <ros>
+            <namespace>${namespace}</namespace>
+          </ros>
+          <frame_name>${namespace}/base_link</frame_name>
+        </plugin>
+      </sensor>
     </gazebo>
 
     <!-- Wheels physics -->
