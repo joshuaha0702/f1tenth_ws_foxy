@@ -309,11 +309,16 @@ def collision(vertices1, vertices2):
 def get_actuation_PD(pose_theta, lookahead_point, position, lookahead_distance, wheelbase, prev_error, P, D):
     waypoint_y = np.dot(np.array([np.sin(-pose_theta), np.cos(-pose_theta)]), lookahead_point[0:2] - position)
     speed = lookahead_point[2]
-    error = 2.0 * waypoint_y / lookahead_distance ** 2
+    curvature = 2.0 * waypoint_y / lookahead_distance ** 2
     if np.abs(waypoint_y) < 1e-4:
-        return speed, 0., error
-    steering_angle = P * error + D * (error - prev_error)
-    return speed, steering_angle, error
+        return speed, 0., curvature
+    
+    # Kinematic steering angle for Ackermann vehicle
+    kinematic_steer = np.arctan(wheelbase * curvature)
+    
+    # P and D gains apply to the kinematic steering angle
+    steering_angle = P * kinematic_steer + D * (kinematic_steer - prev_error)
+    return speed, steering_angle, kinematic_steer
 
 
 def load_config(config_path, namespace=None):
