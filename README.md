@@ -42,8 +42,9 @@ docker exec -it f1tenth_foxy bash
 
 ```bash
 # 컨테이너 내부 전용 단축어 (Dockerfile에 기입됨)
-cb  # 빌드 + 환경 소싱까지 한 번에
-cs  # 빌드 없이 환경 소싱만
+cb       # 빌드 + 환경 소싱까지 한 번에
+cs       # 빌드 없이 환경 소싱만
+extract  # 저장된 rosbag에서 CSV 데이터 추출 (Lattice Planner 툴 활용)
 ```
 
 ## 2. 패키지 빌드
@@ -65,7 +66,7 @@ cb
 
 # 🚀 실행 방법 (데모 주행)
 
-모든 노드는 기본적으로 `car1`이라는 네임스페이스(robot_name)를 사용하도록 설정되어 있습니다.
+모든 노드는 기본적으로 `car1`이라는 네임스페이스(robot_name)를 사용하도록 설정되어 있습니다. 또한, 최신 업데이트를 통해 제어 메시지 규격이 **AckermannDriveStamped**로 표준화되었습니다.
 
 ### 터미널 1: 가제보 월드 및 차량 스폰
 
@@ -77,7 +78,7 @@ ros2 launch racecar_description spawn_car.launch.py
 
 ### 터미널 2: FGM 알고리즘 노드 실행
 
-차량의 라이다 데이터를 분석해 조향 명령을 내리는 메인 알고리즘 노드입니다. 멀티 로봇 구동 시 `robot_name` 파라미터를 변경하여 실행할 수 있습니다.
+차량의 라이다 데이터를 분석해 조향 명령을 내리는 메인 알고리즘 노드입니다. 멀티 로봇 구동 시 `robot_name` 파라미터를 변경하여 실행할 수 있습니다. `ackermann_to_twist` 노드가 자동으로 실행되어 시뮬레이션의 Twist 입력과 호환됩니다.
 
 ```bash
 # 기본 실행 (car1)
@@ -88,7 +89,7 @@ ros2 run f1tenth_fgm_ros2 fgm_node --ros-args -p robot_name:=car2
 ```
 
 ### 터미널 3: 시각화 (RViz2)
-시뮬레이션이 실행 중인 상태에서 새로운 터미널을 열고 접속하여 실행합니다.
+시뮬레이션이 실행 중인 상태에서 새로운 터미널을 열고 접속하여 실행합니다. `car1`과 `car2`를 동시에 모니터링할 수 있도록 설정되어 있습니다.
 
 ```bash
 rviz2 -d src/racecar_description/rviz/f1tenth_default.rviz
@@ -160,7 +161,7 @@ ros2 launch f1tenth_fgm_ros2 example.launch.py
 ### data_logger.py
 차량의 라이다 센서 데이터와 주행 명령을 동기화하여 CSV 파일로 실시간 기록하는 노드입니다.
 * **구독 토픽:** `/{robot_name}/scan`, `/{robot_name}/drive_stamped`, `/{robot_name}/odom`, `/{robot_name}/map_reset`
-* **특징:** `TwistStamped` 메시지를 활용하여 라이다 데이터와 조향/속도 명령의 **타임스탬프를 정확히 매칭**하여 저장합니다. 여러 로봇의 데이터를 수집할 때 덮어씌워지지 않도록 **파일명에 로봇 이름이 포함**됩니다.
+* **특징:** `AckermannDriveStamped` 메시지를 활용하여 라이다 데이터와 조향/속도 명령의 **타임스탬프를 정확히 매칭**하여 저장합니다. 여러 로봇의 데이터를 수집할 때 덮어씌워지지 않도록 **파일명에 로봇 이름이 포함**됩니다.
 * **데이터 헤더:** `lap`, `time`, `steer`, `desired_speed`, `lidar_0` ... `lidar_N`
 * 다운스케일링 Hz 조정 옵션 지원 (5.0, 10.0, 20.0, 40.0)
 
@@ -171,6 +172,15 @@ ros2 run f1tenth_fgm_ros2 data_logger.py --ros-args -p target_hz:=10.0 -p scan_d
 # 특정 로봇 지정 실행 예시
 ros2 run f1tenth_fgm_ros2 data_logger.py --ros-args -p robot_name:=car2 -p target_hz:=20.0
 ```
+
+### extract_bag_csv.py (Data Extraction)
+기록된 `rosbag` 파일에서 CSV 데이터를 추출하는 도구입니다. Docker 내부에 설정된 `extract` alias를 통해 간편하게 실행할 수 있습니다.
+* **특징:** Zero-Order Hold 방식을 사용하여 제어 명령과 센서 데이터를 타임스탬프 기반으로 동기화합니다.
+* **사용법:**
+  ```bash
+  # 컨테이너 내부에서 실행
+  extract --bag <rosbag_path> --output <output_path>
+  ```
 
 ### random_reset.py
 안전 구역 내에서 차량을 무작위 위치 및 방향으로 재스폰(Teleport) 시키는 노드입니다.
@@ -188,10 +198,9 @@ ros2 run f1tenth_fgm_ros2 random_reset.py --ros-args -p robot_name:=car2
 
 ## ⚙️ 주요 파라미터 수정 (Tip)
 
-만약 차량이 코너 안쪽 벽을 긁는다면, `config` 폴더의 `f1tenth_fgm_ros2.yaml` 에서 다음 값을 조정하세요.
-
-* **`carWidth_tolerance`:** 차량 폭에 대한 안전 마진 값 (현재 추천: 0.40)
-* **`max_speed`:** 최대 주행 속도 (안정적인 테스트를 위해 1.0 이하 추천)
+*   **`carWidth_tolerance`:** 차량 폭에 대한 안전 마진 값입니다. 코너 안쪽 벽을 긁는다면 이 값을 높이세요. (현재 추천: **0.30**)
+*   **`max_speed`:** 최대 주행 속도 (안정적인 테스트를 위해 1.0 이하 추천)
+*   **Chassis Collision Detection:** `racecar.gazebo`에 범퍼 센서가 추가되어 차량 섀시의 충돌이 물리적으로 감지됩니다. 충돌 발생 시 시뮬레이션 상에서 즉각적인 피드백을 확인할 수 있습니다.
 
 ## 📄 License
 
