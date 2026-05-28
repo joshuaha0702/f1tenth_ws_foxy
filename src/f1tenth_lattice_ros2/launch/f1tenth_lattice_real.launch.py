@@ -101,7 +101,7 @@ def generate_launch_description():
             'yaml_filename': map_path,
         }],
         condition=IfCondition(
-            PythonExpression([use_map_server, " == 'true' and ", localization_mode, " != 'odom'"])
+            PythonExpression(["'", use_map_server, "' == 'true' and '", localization_mode, "' != 'odom'"])
         )
     )
 
@@ -114,7 +114,7 @@ def generate_launch_description():
         parameters=[amcl_config_path],
         remappings=[('scan', 'scan')],
         condition=IfCondition(
-            PythonExpression([localization_mode, " != 'odom'"])
+            PythonExpression(["'", localization_mode, "' != 'odom'"])
         )
     )
 
@@ -126,7 +126,7 @@ def generate_launch_description():
         output='screen',
         parameters=[{'autostart': True, 'node_names': ['amcl']}],
         condition=IfCondition(
-            PythonExpression([localization_mode, " != 'odom'"])
+            PythonExpression(["'", localization_mode, "' != 'odom'"])
         )
     )
 
