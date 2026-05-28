@@ -1,0 +1,38 @@
+# 다중 에피소드 데이터 수집 설정 (랜덤 모드).
+# 사용:
+#   ros2 launch f1tenth_lattice_ros2 f1tenth_lattice_gazebo.launch.py \
+#       head2head:=true record:=true episodes:=<이 파일 경로>
+#
+# 동작:
+#   매 에피소드 시작 시 raceline_path의 한 행을 무작위로 골라 car1(ego)의 초기 자세로 사용.
+#   car2(선두차)는 ego_idx + random_offset 행에서 추출 (raceline 끝을 넘으면 wrap-around).
+
+num_episodes: 50
+raceline_path: /root/f1tenth_ws/src/f1tenth_lattice_ros2/maps/raceline1.csv
+
+# car2(선두차)가 car1로부터 몇 행 앞에 놓일지의 범위 (raceline 행 인덱스 기준).
+opponent_offset:
+  min: 40    # 너무 작으면 시작부터 충돌 위험
+  max: 100   # 너무 크면 사실상 단독주행
+
+# 매 에피소드 traj_v_scale을 범위 내에서 uniform 랜덤 샘플링. 차량별 키 생략 시 planner 기본값 유지.
+# (lattice_config.yaml의 car1: traj_v_scale, car2: traj_v_scale 을 런타임에 덮어씀)
+traj_v_scale:
+  car1: { min: 0.9, max: 1.0 }
+  car2: { min: 0.3, max: 0.7 }
+
+# 정수 지정 시 동일 시드로 매번 같은 (ego_idx, offset, car1_v_scale, car2_v_scale) 시퀀스 생성.
+# null로 두면 매번 다른 결과 (시스템 시간 기반).
+random_seed: 42
+
+# 에피소드 1개당 sim 시간 기준 녹화 길이 (초)
+sequence_duration_sec: 15.0
+
+# 텔레포트 후 차량/물리가 안정화될 시간 (sim 초)
+settle_time_sec: 1.0
+
+output:
+  base_dir: /root/f1tenth_ws/data/0529
+  staging_subdir: staging       # 녹화 중 임시 위치
+  clean_subdir: clean           # 충돌 없는 에피소드
+  collision_subdir: collision   # 충돌 발생 에피소드

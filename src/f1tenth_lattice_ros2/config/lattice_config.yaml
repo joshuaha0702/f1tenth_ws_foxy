@@ -44,10 +44,10 @@ car1:
     y: 16.0
     yaw_deg: -90.0
   cost_weights:
-    - 0.0
+    - 0.1
     - 10.0
     - 0.003
-    - 0.0
+    - 300.0
   minL: 0.2
   maxL: 1.8
   Lscale: 8.0

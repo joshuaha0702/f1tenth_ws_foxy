@@ -186,11 +186,23 @@ def generate_launch_description():
     bag_output_arg = DeclareLaunchArgument(
         'bag_output',
         default_value='./bags/output',
-        description='ROS Bag 저장 폴더 경로'
+        description='ROS Bag 저장 폴더 경로 (단일 에피소드 모드용)'
+    )
+    episodes_arg = DeclareLaunchArgument(
+        'episodes',
+        default_value='',
+        description='다중 에피소드 yaml 경로. 지정하면 episode_manager가 녹화를 인계받음.'
     )
 
+    # 단일 에피소드(기존) 녹화: record=true 이고 episodes가 비어있을 때만 동작
+    # PythonExpression으로 "record true && episodes empty" 조건을 만듦
+    single_bag_condition = PythonExpression([
+        '"', LaunchConfiguration('record'), '".lower() == "true" and "',
+        LaunchConfiguration('episodes'), '" == ""'
+    ])
+
     record_bag = ExecuteProcess(
-        condition=IfCondition(LaunchConfiguration('record')),
+        condition=IfCondition(single_bag_condition),
         cmd=[
             'bash', '-c',
             'python3 -c "'
@@ -229,6 +241,25 @@ def generate_launch_description():
         ]
     )
 
+    # 다중 에피소드 매니저 (episodes 인자가 비어있지 않을 때만 실행)
+    # 단일 bag 모드와 동일하게 record가 true일 때만 의미가 있음.
+    episode_manager_condition = PythonExpression([
+        '"', LaunchConfiguration('record'), '".lower() == "true" and "',
+        LaunchConfiguration('episodes'), '" != ""'
+    ])
+    episode_manager_node = Node(
+        package='f1tenth_lattice_ros2',
+        executable='episode_manager_node',
+        name='episode_manager',
+        output='screen',
+        condition=IfCondition(episode_manager_condition),
+        parameters=[{
+            'episodes_yaml': LaunchConfiguration('episodes'),
+            'head2head': LaunchConfiguration('head2head'),
+            'use_sim_time': True,
+        }]
+    )
+
     # 가제보 정리 후 1.5초 대기 후 나머지 노드 시작
     delayed_launch = TimerAction(
         period=1.5,
@@ -244,6 +275,12 @@ def generate_launch_description():
         ]
     )
 
+    # 에피소드 매니저는 모든 노드가 자리잡은 뒤 시동 (Gazebo 서비스 가용 + planner 구독자 준비)
+    delayed_manager = TimerAction(
+        period=6.0,
+        actions=[episode_manager_node],
+    )
+
     return LaunchDescription([
         namespace_arg,
         head2head_arg,
@@ -255,6 +292,8 @@ def generate_launch_description():
         yaw_deg2_arg,
         record_arg,
         bag_output_arg,
+        episodes_arg,
         kill_gazebo,
         delayed_launch,
+        delayed_manager,
     ])

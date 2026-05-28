@@ -8,7 +8,8 @@ import math
 from geometry_msgs.msg import Twist, TwistStamped
 from nav_msgs.msg import Odometry
 from visualization_msgs.msg import Marker, MarkerArray
-from std_msgs.msg import ColorRGBA
+from std_msgs.msg import ColorRGBA, String
+from rcl_interfaces.msg import SetParametersResult
 from geometry_msgs.msg import Point, PoseStamped
 # [하드웨어 호환성] 실제 차량 구동을 위한 Ackermann 메시지 임포트
 from ackermann_msgs.msg import AckermannDriveStamped
@@ -71,6 +72,10 @@ class LatticePlannerNode(Node):
         # Opponent state (head-to-head mode)
         self.opp_pose = np.empty((0, 3))
 
+        # 에피소드 모드: 매니저에게 STOP/START 명령을 받아 publish gate를 토글함
+        # (텔레포트 직후 stale state가 다음 에피소드로 새는 것을 차단)
+        self._publishing_enabled = True
+
         # QoS
         qos = QoSProfile(depth=10)
 
@@ -88,6 +93,18 @@ class LatticePlannerNode(Node):
         self.drive_pub = self.create_publisher(AckermannDriveStamped, 'drive', qos)
         self.raceline_pub = self.create_publisher(MarkerArray, 'raceline_marker', qos)
         self.best_traj_pub = self.create_publisher(Marker, 'best_traj_marker', qos)
+
+        # 에피소드 매니저로부터 STOP / START 신호 수신 (네임스페이스 무관 글로벌 토픽)
+        self.create_subscription(
+            String, '/episode/control', self._episode_control_callback, 10
+        )
+
+        # traj_v_scale을 런타임 변경 가능한 파라미터로 노출 (외부에서 `ros2 param set` 또는
+        # 매니저의 SetParameters 호출로 갱신 가능). 기본값은 lattice_config.yaml의 값.
+        self.declare_parameter('traj_v_scale', float(self.planner.traj_v_scale))
+        # 런치 시점에 CLI로 override 됐을 수도 있으니 다시 읽어 동기화
+        self.planner.traj_v_scale = float(self.get_parameter('traj_v_scale').value)
+        self.add_on_set_parameters_callback(self._on_param_set)
 
         # Planning timer
         period = 1.0 / plan_freq
@@ -118,7 +135,52 @@ class LatticePlannerNode(Node):
         theta = quat_to_yaw(q.x, q.y, q.z, q.w)
         self.opp_pose = np.array([[x, y, theta]])
 
+    def _on_param_set(self, params):
+        """외부에서 SetParameters 서비스로 들어오는 파라미터 변경을 처리.
+
+        현재는 traj_v_scale 만 동적 변경 허용. 그 외 파라미터는 변경을 거부하지 않고
+        그냥 통과시킴(필요해지면 추가).
+        """
+        for p in params:
+            if p.name == 'traj_v_scale':
+                try:
+                    new_val = float(p.value)
+                except (TypeError, ValueError):
+                    return SetParametersResult(
+                        successful=False,
+                        reason=f'traj_v_scale must be a number, got {p.value!r}',
+                    )
+                old_val = self.planner.traj_v_scale
+                self.planner.traj_v_scale = new_val
+                self.get_logger().info(
+                    f'[param] traj_v_scale: {old_val} -> {new_val:.3f}'
+                )
+        return SetParametersResult(successful=True)
+
+    def _episode_control_callback(self, msg: String):
+        cmd = msg.data.strip().upper()
+        if cmd == 'STOP':
+            # 0속도 명령 한 번 박아두어 Gazebo plugin의 마지막 cmd_vel을 해제함
+            stop_msg = AckermannDriveStamped()
+            stop_msg.header.stamp = self.get_clock().now().to_msg()
+            stop_msg.header.frame_id = 'base_link'
+            stop_msg.drive.speed = 0.0
+            stop_msg.drive.steering_angle = 0.0
+            self.drive_pub.publish(stop_msg)
+            # 다음 에피소드에 stale odom/opponent state가 새지 않도록 클리어
+            self.odom_received = False
+            self.opp_pose = np.empty((0, 3))
+            self._publishing_enabled = False
+            self.get_logger().info('[episode] STOP — paused publishing & cleared state')
+        elif cmd == 'START':
+            self._publishing_enabled = True
+            self.get_logger().info('[episode] START — resumed publishing')
+        else:
+            self.get_logger().warn(f'[episode] unknown control cmd: {msg.data!r}')
+
     def _plan_callback(self):
+        if not self._publishing_enabled:
+            return
         if not self.odom_received:
             return
 
