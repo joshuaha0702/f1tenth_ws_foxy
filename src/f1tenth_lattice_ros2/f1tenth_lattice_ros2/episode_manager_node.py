@@ -658,9 +658,9 @@ class EpisodeManagerNode(Node):
 
         # 7) STOP + bag flush
         self._monitoring_collision = False
-        self._publish_control('STOP')
-        self._spin_for_wall(0.4)  # 마지막 0-cmd / 잔여 메시지가 bag에 들어가게 둠
         self._stop_bag_record(bag_proc)
+        self._publish_control('STOP')
+        
 
         # 8) 경로 분리
         collided = self._collision_seen

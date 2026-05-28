@@ -4,7 +4,7 @@ import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument, ExecuteProcess, TimerAction, GroupAction
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
@@ -43,6 +43,15 @@ def generate_launch_description():
     )
     head2head = LaunchConfiguration('head2head')
 
+    # Headless mode argument
+    headless_arg = DeclareLaunchArgument(
+        'headless',
+        default_value='false',
+        description='Gazebo gzclient와 RViz2를 실행하지 않음 (RTF 향상)'
+    )
+    headless = LaunchConfiguration('headless')
+    gui_value = PythonExpression(['"false" if "', headless, '".lower() == "true" else "true"'])
+
     # Spawn coordinates arguments (car1) — defaults from lattice_config.yaml
     x_arg = DeclareLaunchArgument('x', default_value=str(_s1.get('x', 6.4)), description='Car1 Spawn X position')
     y_arg = DeclareLaunchArgument('y', default_value=str(_s1.get('y', 16.0)), description='Car1 Spawn Y position')
@@ -64,7 +73,11 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(
             os.path.join(description_pkg, 'launch', 'spawn_car.launch.py')
         ),
-        launch_arguments={'namespace': 'car1', 'x': spawn_x, 'y': spawn_y, 'yaw': spawn_yaw}.items()
+        launch_arguments={
+            'namespace': 'car1',
+            'x': spawn_x, 'y': spawn_y, 'yaw': spawn_yaw,
+            'gui': gui_value,
+        }.items()
     )
 
     # Spawn car2 only (Gazebo already running)
@@ -77,6 +90,7 @@ def generate_launch_description():
             'x': spawn_x2, 'y': spawn_y2, 'yaw': spawn_yaw2,
             'launch_gazebo': 'false',
             'color': 'orange',
+            'visualize_lidar': 'false',
         }.items()
     )
 
@@ -99,7 +113,6 @@ def generate_launch_description():
             'map_path': map_path,
             'max_speed': 3.0,
             'max_steering_angle': 0.4189,
-            'plan_frequency': 10.0,
             'opponent_namespace': 'car2',
         }]
     )
@@ -126,7 +139,6 @@ def generate_launch_description():
             'map_path': map_path,
             'max_speed': 3.0,
             'max_steering_angle': 0.4189,
-            'plan_frequency': 10.0,
             'opponent_namespace': 'car1',
         }]
     )
@@ -140,13 +152,14 @@ def generate_launch_description():
         output='screen'
     )
 
-    # RViz2 with existing config
+    # RViz2 with existing config (headless 시 비활성화)
     rviz_node = Node(
         package='rviz2',
         executable='rviz2',
         name='rviz2',
         arguments=['-d', os.path.join(description_pkg, 'rviz', 'f1tenth_default.rviz')],
-        output='screen'
+        output='screen',
+        condition=UnlessCondition(headless)
     )
 
     # Static TFs — car1
@@ -284,6 +297,7 @@ def generate_launch_description():
     return LaunchDescription([
         namespace_arg,
         head2head_arg,
+        headless_arg,
         x_arg,
         y_arg,
         yaw_arg,

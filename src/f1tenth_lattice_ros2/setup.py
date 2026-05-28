@@ -27,6 +27,7 @@ setup(
             'lattice_planner_node = f1tenth_lattice_ros2.planner_node:main',
             'slam_lattice_planner_node = f1tenth_lattice_ros2.slam_planner_node:main',
             'episode_manager_node = f1tenth_lattice_ros2.episode_manager_node:main',
+            'bag2gazebo_node = f1tenth_lattice_ros2.bag2gazebo_node:main',
         ],
     },
 )

@@ -5,9 +5,10 @@
   <xacro:include filename="$(find racecar_description)/urdf/racecar.gazebo" />
   <xacro:arg name="namespace" default="" />
   <xacro:arg name="color" default="blue" />
+  <xacro:arg name="visualize_lidar" default="true" />
   <xacro:property name="chassis_color" value="$(arg color)" />
 
-  <xacro:racecar_gazebo namespace="$(arg namespace)" />
+  <xacro:racecar_gazebo namespace="$(arg namespace)" visualize_lidar="$(arg visualize_lidar)" />
 
   <!-- 1. 기본 링크 설정 -->
   <link name="base_link" />

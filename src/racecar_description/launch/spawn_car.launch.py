@@ -27,11 +27,18 @@ def generate_launch_description():
     declare_y_cmd = DeclareLaunchArgument('y', default_value='2.0')
     declare_yaw_cmd = DeclareLaunchArgument('yaw', default_value='0.0')
     declare_launch_gazebo_cmd = DeclareLaunchArgument('launch_gazebo', default_value='true')
+    declare_gui_cmd = DeclareLaunchArgument('gui', default_value='true',
+                                            description='Set to "false" to run Gazebo headless (gzserver only)')
     declare_color_cmd = DeclareLaunchArgument('color', default_value='blue')
+    declare_visualize_lidar_cmd = DeclareLaunchArgument('visualize_lidar', default_value='true',
+                                                        description='LiDAR 레이 시각화 여부')
 
     # 2. Xacro 실행 및 URDF 생성 (namespace, color 인자를 xacro에 전달)
     robot_description_content = ParameterValue(
-        Command(['xacro ', xacro_file, ' namespace:=', namespace, ' color:=', color]),
+        Command(['xacro ', xacro_file,
+                 ' namespace:=', namespace,
+                 ' color:=', color,
+                 ' visualize_lidar:=', LaunchConfiguration('visualize_lidar')]),
         value_type=str
     )
 
@@ -53,7 +60,11 @@ def generate_launch_description():
         PythonLaunchDescriptionSource([
             os.path.join(get_package_share_directory('gazebo_ros'), 'launch', 'gazebo.launch.py')
         ]),
-        launch_arguments={'world': world_file_path, 'verbose': 'true'}.items(),
+        launch_arguments={
+            'world': world_file_path,
+            'verbose': 'true',
+            'gui': LaunchConfiguration('gui'),
+        }.items(),
         condition=IfCondition(launch_gazebo)
     )
 
@@ -78,7 +89,9 @@ def generate_launch_description():
         declare_y_cmd,
         declare_yaw_cmd,
         declare_launch_gazebo_cmd,
+        declare_gui_cmd,
         declare_color_cmd,
+        declare_visualize_lidar_cmd,
         node_robot_state_publisher,
         gazebo,
         spawn_entity

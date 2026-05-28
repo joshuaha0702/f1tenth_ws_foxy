@@ -29,7 +29,7 @@ random_seed: 42
 sequence_duration_sec: 15.0
 
 # 텔레포트 후 차량/물리가 안정화될 시간 (sim 초)
-settle_time_sec: 1.0
+settle_time_sec: 3.0
 
 output:
   base_dir: /root/f1tenth_ws/data/0529
