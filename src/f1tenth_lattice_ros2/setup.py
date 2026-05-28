@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'lattice_planner_node = f1tenth_lattice_ros2.planner_node:main',
+            'slam_lattice_planner_node = f1tenth_lattice_ros2.slam_planner_node:main',
             'episode_manager_node = f1tenth_lattice_ros2.episode_manager_node:main',
         ],
     },

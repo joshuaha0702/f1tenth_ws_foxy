@@ -128,6 +128,24 @@ class LatticePlannerNode(Node):
         self.latest_odom_stamp = msg.header.stamp
         self.odom_received = True
 
+        if getattr(self, 'best_traj', None) is not None:
+            # Pure pursuit on the selected local trajectory at high frequency
+            steering, speed = self.planner.tracker.plan(
+                self.pose_x, self.pose_y, self.pose_theta,
+                self.velocity, self.best_traj
+            )
+
+            # Clamp outputs
+            steering = float(np.clip(steering, -self.max_steer, self.max_steer))
+            speed = float(np.clip(speed, 0.0, self.max_speed))
+
+            drive_msg = AckermannDriveStamped()
+            drive_msg.header.stamp = msg.header.stamp
+            drive_msg.header.frame_id = 'base_link'
+            drive_msg.drive.speed = speed
+            drive_msg.drive.steering_angle = steering
+            self.drive_pub.publish(drive_msg)
+
     def _opp_odom_callback(self, msg: Odometry):
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
@@ -191,32 +209,15 @@ class LatticePlannerNode(Node):
                 self.pose_x, self.pose_y, self.pose_theta,
                 opp_poses, self.velocity
             )
+            self.best_traj = best_traj
         except Exception as e:
             self.get_logger().warn(f'Lattice plan failed: {e}', throttle_duration_sec=2.0)
             return
 
-        # Pure pursuit on the selected local trajectory
-        steering, speed = self.planner.tracker.plan(
-            self.pose_x, self.pose_y, self.pose_theta,
-            self.velocity, best_traj
-        )
-
-        # Clamp outputs
-        steering = float(np.clip(steering, -self.max_steer, self.max_steer))
-        speed = float(np.clip(speed, 0.0, self.max_speed))
-
         now = self.get_clock().now().to_msg()
 
-        # [하드웨어 호환성] Ackermann 메시지 생성 및 필드 할당 (Twist 대신 직접 필드 사용)
-        drive_msg = AckermannDriveStamped()
-        drive_msg.header.stamp = self.latest_odom_stamp if self.latest_odom_stamp else now
-        drive_msg.header.frame_id = 'base_link'
-        drive_msg.drive.speed = speed
-        drive_msg.drive.steering_angle = steering
-        self.drive_pub.publish(drive_msg)
-
         # Publish best trajectory visualization
-        self._publish_best_traj(best_traj, now)
+        self._publish_best_traj(self.best_traj, now)
 
     def _publish_raceline_once(self):
         if self._raceline_published:
