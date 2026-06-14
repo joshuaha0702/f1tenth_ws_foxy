@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     vim \
     tmux \
     wget \
+    libeigen3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. SLAM 및 Navigation2 관련 패키지 설치

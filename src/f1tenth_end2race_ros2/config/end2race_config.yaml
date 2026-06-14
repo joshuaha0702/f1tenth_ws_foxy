@@ -1,0 +1,13 @@
+/**:
+  ros__parameters:
+    robot_name: "car1" 
+    model_path: "/home/f1tenth_ws_foxy/src/f1tenth_end2race_ros2/tools/end2race.pth"
+    hidden_scale: 4
+    
+    control:
+      max_steer: 0.52
+      min_steer: -0.52
+      max_speed: 4.0
+
+    environment:
+      map_name: "Simple_map"

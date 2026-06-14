@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>f1tenth_end2race_ros2</name>
+  <version>0.0.1</version>
+  <description>Gazebo-only End2Race Inference Package</description>
+  <maintainer email="user@example.com">user</maintainer>
+  <license>MIT</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>ackermann_msgs</depend>
+  <exec_depend>python3-torch</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
