@@ -19,6 +19,10 @@ bag2gazebo_node가 받아 set_entity_state로 차량을 텔레포트함.
 재생 속도 조절:
     ros2 launch f1tenth_lattice_ros2 gazebo_replay.launch.py \\
         bag:=<path> rate:=0.5
+
+RViz만 실행 (Gazebo 생략):
+    ros2 launch f1tenth_lattice_ros2 gazebo_replay.launch.py \\
+        bag:=<path> gazebo:=false
 """
 
 import math
@@ -33,9 +37,11 @@ from launch.actions import (
     IncludeLaunchDescription,
     TimerAction,
 )
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -65,20 +71,28 @@ def generate_launch_description():
         default_value='1.0',
         description='재생 속도 배율 (0.5 = 절반 속도, 2.0 = 2배속)'
     )
+    gazebo_arg = DeclareLaunchArgument(
+        'gazebo',
+        default_value='false',
+        description='Gazebo 시뮬레이터 실행 여부 (false면 RViz로만 재생)'
+    )
+    gazebo = LaunchConfiguration('gazebo')
 
-    # 이전 Gazebo 프로세스 정리
+    # 이전 Gazebo 프로세스 정리 (gazebo:=false면 스킵)
     kill_gazebo = ExecuteProcess(
+        condition=IfCondition(gazebo),
         cmd=['bash', '-c',
              'pkill -9 -f gzserver; pkill -9 -f gzclient; '
              'sleep 1.5; echo "[replay] Gazebo cleaned up"'],
         output='screen'
     )
 
-    # Gazebo + car1 스폰
+    # Gazebo + car1 스폰 (gazebo:=false면 스킵)
     spawn_car1 = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(description_pkg, 'launch', 'spawn_car.launch.py')
         ),
+        condition=IfCondition(gazebo),
         launch_arguments={
             'namespace': 'car1',
             'x': str(_s1.get('x', 6.4)),
@@ -88,11 +102,12 @@ def generate_launch_description():
         }.items()
     )
 
-    # car2 스폰 (Gazebo는 이미 실행 중)
+    # car2 스폰 (Gazebo는 이미 실행 중, gazebo:=false면 스킵)
     spawn_car2 = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(description_pkg, 'launch', 'spawn_car.launch.py')
         ),
+        condition=IfCondition(gazebo),
         launch_arguments={
             'namespace': 'car2',
             'x': str(_s2.get('x', 6.4)),
@@ -103,12 +118,41 @@ def generate_launch_description():
         }.items()
     )
 
-    # bag의 odom을 받아 Gazebo 모델 위치를 업데이트하는 브리지 노드
+    # gazebo:=false일 때는 spawn_car.launch.py(=robot_state_publisher+Gazebo+spawn_entity) 대신
+    # robot_state_publisher만 단독 실행해서 RViz가 RobotModel/TF를 그릴 수 있게 함
+    xacro_file = os.path.join(description_pkg, 'urdf', 'racecar.xacro')
+
+    def robot_state_publisher(namespace, color, visualize_lidar):
+        robot_description_content = ParameterValue(
+            Command(['xacro ', xacro_file,
+                     ' namespace:=', namespace,
+                     ' color:=', color,
+                     ' visualize_lidar:=', visualize_lidar]),
+            value_type=str
+        )
+        return Node(
+            package='robot_state_publisher',
+            executable='robot_state_publisher',
+            namespace=namespace,
+            output='screen',
+            condition=UnlessCondition(gazebo),
+            parameters=[{
+                'robot_description': robot_description_content,
+                'use_sim_time': True,
+                'frame_prefix': [namespace, '/'],
+            }]
+        )
+
+    rsp_car1 = robot_state_publisher('car1', 'blue', 'true')
+    rsp_car2 = robot_state_publisher('car2', 'orange', 'false')
+
+    # bag의 odom을 받아 Gazebo 모델 위치를 업데이트하는 브리지 노드 (gazebo:=false면 스킵)
     bag2gazebo = Node(
         package='f1tenth_lattice_ros2',
         executable='bag2gazebo_node',
         name='bag2gazebo',
         output='screen',
+        condition=IfCondition(gazebo),
         parameters=[{
             'cars': ['car1', 'car2'],
             'pause_on_start': True,   # 물리 엔진 정지 (시각 재생 전용)
@@ -146,7 +190,7 @@ def generate_launch_description():
 
     delayed_spawn = TimerAction(
         period=1.5,
-        actions=[spawn_car1, spawn_car2, map_to_odom1, map_to_odom2, rviz_node]
+        actions=[spawn_car1, spawn_car2, rsp_car1, rsp_car2, map_to_odom1, map_to_odom2, rviz_node]
     )
 
     delayed_bridge = TimerAction(
@@ -185,6 +229,7 @@ def generate_launch_description():
     return LaunchDescription([
         bag_arg,
         rate_arg,
+        gazebo_arg,
         kill_gazebo,
         delayed_spawn,
         delayed_bridge,

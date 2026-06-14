@@ -27,9 +27,11 @@ class Bag2GazeboNode(Node):
 
         self.declare_parameter('cars', ['car1', 'car2'])
         self.declare_parameter('pause_on_start', True)
+        self.declare_parameter('gui_update_rate', 30.0)
 
         cars = list(self.get_parameter('cars').value)
         pause_on_start = bool(self.get_parameter('pause_on_start').value)
+        gui_update_rate = float(self.get_parameter('gui_update_rate').value)
 
         self.set_state_cli = self.create_client(
             SetEntityState, '/gazebo/set_entity_state'
@@ -55,6 +57,11 @@ class Bag2GazeboNode(Node):
         qos = QoSProfile(depth=20)
         qos.reliability = ReliabilityPolicy.RELIABLE
 
+        # bag의 odom rate(보통 100Hz)대로 매번 set_entity_state를 호출하면
+        # gzserver의 (단일 스레드) ROS 서비스 핸들러가 밀려 GUI가 버벅임.
+        # 콜백에서는 최신 pose만 캐싱하고, 별도 타이머에서 낮은 주기로만 텔레포트함.
+        self.latest_pose = {car: None for car in cars}
+
         for car in cars:
             topic = f'/{car}/odom'
             self.create_subscription(
@@ -64,20 +71,28 @@ class Bag2GazeboNode(Node):
             )
             self.get_logger().info(f'Subscribed: {topic} -> set_entity_state({car})')
 
+        self.create_timer(1.0 / gui_update_rate, self._publish_states)
+
     def _on_odom(self, name: str, msg: Odometry):
-        req = SetEntityState.Request()
-        req.state.name = name
-        req.state.pose = msg.pose.pose
-        # twist는 0으로 둠 (paused 상태라 무관하지만, 만약 unpause 되더라도 안전)
-        req.state.twist.linear.x = 0.0
-        req.state.twist.linear.y = 0.0
-        req.state.twist.linear.z = 0.0
-        req.state.twist.angular.x = 0.0
-        req.state.twist.angular.y = 0.0
-        req.state.twist.angular.z = 0.0
-        req.state.reference_frame = 'world'
-        # fire-and-forget — 응답 안 기다림 (실시간성 우선)
-        self.set_state_cli.call_async(req)
+        self.latest_pose[name] = msg.pose.pose
+
+    def _publish_states(self):
+        for name, pose in self.latest_pose.items():
+            if pose is None:
+                continue
+            req = SetEntityState.Request()
+            req.state.name = name
+            req.state.pose = pose
+            # twist는 0으로 둠 (paused 상태라 무관하지만, 만약 unpause 되더라도 안전)
+            req.state.twist.linear.x = 0.0
+            req.state.twist.linear.y = 0.0
+            req.state.twist.linear.z = 0.0
+            req.state.twist.angular.x = 0.0
+            req.state.twist.angular.y = 0.0
+            req.state.twist.angular.z = 0.0
+            req.state.reference_frame = 'world'
+            # fire-and-forget — 응답 안 기다림 (실시간성 우선)
+            self.set_state_cli.call_async(req)
 
 
 def main(args=None):

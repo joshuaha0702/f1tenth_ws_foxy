@@ -81,8 +81,8 @@ def extract_bag_to_csv(bag_dir_path, save_dir='/root/f1tenth_ws/f1tenth_data', r
                 elif connection.topic == drive_topic:
                     drives.append((
                         stamp_ns,
-                        float(msg.twist.angular.z),
-                        float(msg.twist.linear.x),
+                        float(msg.drive.steering_angle),
+                        float(msg.drive.speed),
                     ))
 
     except Exception as e:

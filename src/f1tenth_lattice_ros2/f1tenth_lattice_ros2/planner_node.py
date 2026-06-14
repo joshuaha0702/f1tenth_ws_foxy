@@ -5,7 +5,6 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 import numpy as np
 import math
 
-from geometry_msgs.msg import Twist, TwistStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 from visualization_msgs.msg import Marker, MarkerArray
@@ -70,12 +69,6 @@ class LatticePlannerNode(Node):
 
         # Opponent state (head-to-head mode)
         self.opp_pose = np.empty((0, 3))
-
-        # 스캔-트리거 플래닝 상태
-        # _plan_scan_stamp: 가장 최근 planner.plan()을 유발한 스캔의 타임스탬프
-        # _new_plan_available: 이번 odom 콜백이 새 plan의 첫 번째 tracker 호출인지 여부
-        self._plan_scan_stamp = None
-        self._new_plan_available = False
 
         # 에피소드 모드: 매니저에게 STOP/START 명령을 받아 publish gate를 토글함
         # (텔레포트 직후 stale state가 다음 에피소드로 새는 것을 차단)
@@ -144,16 +137,8 @@ class LatticePlannerNode(Node):
             speed = float(np.clip(speed, 0.0, self.max_speed))
 
             drive_msg = AckermannDriveStamped()
-            # 스캔-트리거로 새 plan이 만들어진 첫 번째 tracker 호출:
-            #   타임스탬프 = 해당 plan을 유발한 스캔의 header.stamp
-            # 동일 best_traj를 재사용하는 후속 tracker 호출:
-            #   타임스탬프 = sec=-1 (sentinel: 이 주기에 새 plan 없음을 의미)
-            if self._new_plan_available:
-                drive_msg.header.stamp = self._plan_scan_stamp
-                self._new_plan_available = False
-            else:
-                drive_msg.header.stamp.sec = -1
-                drive_msg.header.stamp.nanosec = 0
+            # 타임스탬프 = 이 drive 메시지를 실제로 발행하는 시점
+            drive_msg.header.stamp = self.get_clock().now().to_msg()
             drive_msg.header.frame_id = 'base_link'
             drive_msg.drive.speed = speed
             drive_msg.drive.steering_angle = steering
@@ -202,7 +187,6 @@ class LatticePlannerNode(Node):
             self.odom_received = False
             self.opp_pose = np.empty((0, 3))
             self.best_traj = None
-            self._new_plan_available = False
             self._publishing_enabled = False
             self.get_logger().info('[episode] STOP — paused publishing & cleared state')
         elif cmd == 'START':
@@ -225,8 +209,6 @@ class LatticePlannerNode(Node):
                 opp_poses, self.velocity
             )
             self.best_traj = best_traj
-            self._plan_scan_stamp = msg.header.stamp
-            self._new_plan_available = True
         except Exception as e:
             self.get_logger().warn(f'Lattice plan failed: {e}', throttle_duration_sec=2.0)
             return

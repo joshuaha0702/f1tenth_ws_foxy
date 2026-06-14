@@ -38,7 +38,7 @@ def generate_launch_description():
     # Head-to-head mode argument
     head2head_arg = DeclareLaunchArgument(
         'head2head',
-        default_value='false',
+        default_value='true',
         description='car2도 함께 생성하여 head-to-head 주행 (true/false)'
     )
     head2head = LaunchConfiguration('head2head')
