@@ -114,6 +114,7 @@ def generate_launch_description():
             'max_speed': 3.0,
             'max_steering_angle': 0.4189,
             'opponent_namespace': 'car2',
+            'use_sim_time': True,
         }]
     )
 
@@ -140,6 +141,7 @@ def generate_launch_description():
             'max_speed': 3.0,
             'max_steering_angle': 0.4189,
             'opponent_namespace': 'car1',
+            'use_sim_time': True,
         }]
     )
 

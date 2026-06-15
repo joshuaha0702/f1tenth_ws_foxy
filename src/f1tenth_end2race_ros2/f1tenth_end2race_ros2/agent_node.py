@@ -4,7 +4,6 @@ import numpy as np
 import torch
 import os
 from sensor_msgs.msg import LaserScan
-from nav_msgs.msg import Odometry
 from ackermann_msgs.msg import AckermannDriveStamped
 from .model import End2Race
 
@@ -14,7 +13,7 @@ class End2RaceAgent(Node):
         
         # 1. 파라미터 선언
         self.declare_parameter('robot_name', 'car1')
-        self.declare_parameter('model_path', '/home/f1tenth_ws_foxy/src/f1tenth_end2race_ros2/tools/end2race.pth')
+        self.declare_parameter('model_path', '/home/f1tenth_ws_foxy/src/f1tenth_end2race_ros2/models/end2race.pth')
         self.declare_parameter('hidden_scale', 4)
         
         self.robot_name = self.get_parameter('robot_name').value
@@ -37,30 +36,45 @@ class End2RaceAgent(Node):
         # 3. GRU Hidden State 초기화 (model.py 내부 구조 참조)
         # processed_features = 360 + 360//6 = 420
         # hidden_size = 420 * hidden_scale
-        self.hidden_state = None 
+        self.hidden_state = None
         self.current_speed = 0.0
-        
+
+        # 최신 라이다 데이터 및 타임스탬프
+        self.latest_ranges = None
+        self.latest_scan_stamp = None
+
         # 4. ROS 2 Pub/Sub
         self.scan_sub = self.create_subscription(LaserScan, f'/{self.robot_name}/scan', self.scan_callback, 10)
-        self.odom_sub = self.create_subscription(Odometry, f'/{self.robot_name}/odom', self.odom_callback, 10)
         self.drive_pub = self.create_publisher(AckermannDriveStamped, f'/{self.robot_name}/drive', 10)
 
-    def odom_callback(self, msg):
-        self.current_speed = msg.twist.twist.linear.x
+        # 50Hz로 추론 및 제어 명령 발행
+        self.drive_timer = self.create_timer(1.0 / 50.0, self.drive_callback)
 
     def scan_callback(self, msg):
-        # LiDAR 데이터 전처리
+        # 라이다 데이터와 타임스탬프 저장
         ranges = np.array(msg.ranges)
-        ranges = np.nan_to_num(ranges, nan=msg.range_max, posinf=msg.range_max)
-        
-        if len(ranges) != self.num_features:
-            indices = np.linspace(0, len(ranges)-1, self.num_features, dtype=int)
-            ranges = ranges[indices]
+        ranges = np.where(np.isinf(ranges), 30.0, ranges)
+        ranges = np.where(np.isnan(ranges), 0.0, ranges)
 
-        # 5. model.py의 inference_step 활용
+        if len(ranges) != self.num_features:
+            # extract_bag_csv.py와 동일한 방식으로 다운스케일 (양 끝은 절반 구간, 중간은 겹치는 구간의 최소값)
+            scan_factor = len(ranges) // self.num_features
+            reduced_ranges = [np.min(ranges[: scan_factor // 2])]
+            for i in range(1, self.num_features - 1):
+                reduced_ranges.append(np.min(ranges[(i - 1) * scan_factor:(i + 1) * scan_factor]))
+            reduced_ranges.append(np.min(ranges[-(scan_factor // 2):]))
+            ranges = np.array(reduced_ranges)
+        self.latest_ranges = ranges
+        self.latest_scan_stamp = msg.header.stamp
+
+    def drive_callback(self):
+        if self.latest_ranges is None:
+            return
+
+        # model.py의 inference_step 활용
         # 이 함수 내부에서 Tensor 변환 및 Device 처리가 수행됨
         actions, self.hidden_state = self.model.inference_step(
-            lidar_data=ranges,
+            lidar_data=self.latest_ranges,
             current_speed=self.current_speed,
             prev_hidden=self.hidden_state
         )
@@ -69,7 +83,7 @@ class End2RaceAgent(Node):
         steer_out = float(actions[0])
         speed_out = float(actions[1])
 
-        # 6. 제어 메시지 발행
+        # 제어 메시지 발행
         drive_msg = AckermannDriveStamped()
         drive_msg.header.stamp = self.get_clock().now().to_msg()
         drive_msg.drive.steering_angle = np.clip(steer_out, -0.52, 0.52)
