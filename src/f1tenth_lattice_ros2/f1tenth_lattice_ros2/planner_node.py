@@ -4,6 +4,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 
 import numpy as np
 import math
+import time
 
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
@@ -204,10 +205,23 @@ class LatticePlannerNode(Node):
         opp_poses = self.opp_pose
 
         try:
+            t0 = time.perf_counter()
             best_traj, best_cost, traj_cost, abs_v_cost, collision_cost = self.planner.plan(
                 self.pose_x, self.pose_y, self.pose_theta,
                 opp_poses, self.velocity
             )
+            elapsed = time.perf_counter() - t0
+            if elapsed > 0.03:
+                timing = self.planner.last_timing
+                if timing is not None:
+                    clothoid_ms, eval_ms = timing
+                    self.get_logger().warn(
+                        f'[plan timing] total={elapsed*1000:.1f}ms '
+                        f'(clothoid={clothoid_ms:.1f}ms, eval={eval_ms:.1f}ms)',
+                        throttle_duration_sec=1.0
+                    )
+                else:
+                    self.get_logger().warn(f'[plan timing] {elapsed*1000:.1f}ms', throttle_duration_sec=1.0)
             self.best_traj = best_traj
         except Exception as e:
             self.get_logger().warn(f'Lattice plan failed: {e}', throttle_duration_sec=2.0)

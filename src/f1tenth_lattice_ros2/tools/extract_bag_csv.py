@@ -43,28 +43,37 @@ def extract_bag_to_csv(bag_dir_path, save_dir='/root/f1tenth_ws/f1tenth_data', r
 
     scan_topic = f'/{robot_name}/scan'
     drive_topic = f'/{robot_name}/drive'
+    clock_topic = '/clock'
 
     typestore = get_typestore(Stores.ROS2_FOXY)
     typestore.register(get_types_from_msg(ACKERMANN_DRIVE_MSG, 'ackermann_msgs/msg/AckermannDrive'))
     typestore.register(get_types_from_msg(ACKERMANN_DRIVE_STAMPED_MSG, 'ackermann_msgs/msg/AckermannDriveStamped'))
 
-    # Pass 1: 두 토픽을 헤더 stamp와 함께 전부 수집함
-    # (rosbag 기록 시간 대신 publisher가 채운 header.stamp를 정합 기준으로 사용)
-    scans = []   # (stamp_ns, reduced_ranges)
-    drives = []  # (stamp_ns, steer, desired_speed)
+    # Pass 1: scan/drive는 bag 기록 시각(real wall-clock, 나노초)으로 수집하고,
+    # /clock은 (bag 기록 시각 -> 그 순간의 sim-time) 앵커로 따로 모음.
+    #   - bag_ts: 나노초 해상도라 같은 /clock 틱 안에서도 scan-drive 순서/매칭을 정확히 구분 가능
+    #   - /clock 앵커: wall->sim 매핑을 만들어, bag_ts를 고해상도 sim-time으로 환산함
+    #     (header.stamp는 /clock 10Hz로 양자화되어 있고, 중복 퍼블리셔 오염도 있어 사용하지 않음)
+    scans = []          # (bag_ns, reduced_ranges)
+    drives = []         # (bag_ns, steer, desired_speed)
+    clock_wall = []     # bag 기록 시각(ns)
+    clock_sim = []      # 그 순간의 sim-time(ns)
 
     print(f"데이터 추출 시작... (대상: {bag_name})")
 
     try:
         with Reader(bag_dir_path) as reader:
-            for connection, _bag_ts, rawdata in reader.messages():
-                if connection.topic not in (scan_topic, drive_topic):
+            for connection, bag_ts, rawdata in reader.messages():
+                if connection.topic not in (scan_topic, drive_topic, clock_topic):
                     continue
 
                 msg = typestore.deserialize_cdr(rawdata, connection.msgtype)
-                stamp_ns = stamp_to_ns(msg.header.stamp)
 
-                if connection.topic == scan_topic:
+                if connection.topic == clock_topic:
+                    clock_wall.append(bag_ts)
+                    clock_sim.append(stamp_to_ns(msg.clock))
+
+                elif connection.topic == scan_topic:
                     ranges = np.array(msg.ranges)
                     ranges = np.where(np.isinf(ranges), 30.0, ranges)
                     ranges = np.where(np.isnan(ranges), 0.0, ranges)
@@ -74,11 +83,11 @@ def extract_bag_to_csv(bag_dir_path, save_dir='/root/f1tenth_ws/f1tenth_data', r
                     for i in range(1, scan_downsample_factor - 1):
                         reduced_ranges.append(float(np.min(ranges[(i-1)*scan_factor : (i+1)*scan_factor])))
                     reduced_ranges.append(float(np.min(ranges[-(scan_factor//2) : ])))
-                    scans.append((stamp_ns, reduced_ranges))
+                    scans.append((bag_ts, reduced_ranges))
 
                 elif connection.topic == drive_topic:
                     drives.append((
-                        stamp_ns,
+                        bag_ts,
                         float(msg.drive.steering_angle),
                         float(msg.drive.speed),
                     ))
@@ -87,14 +96,29 @@ def extract_bag_to_csv(bag_dir_path, save_dir='/root/f1tenth_ws/f1tenth_data', r
         print(f"Bag 파일을 읽는 중 오류 발생: {e}")
         return
 
-    # rosbag 기록 순서가 헤더 stamp 순서와 어긋날 수 있어서 명시적으로 정렬함
+    if not clock_wall:
+        print("경고: /clock 토픽이 없어 wall->sim 환산을 할 수 없음. bag을 확인하세요.")
+        return
+
+    # wall(ns) -> sim(ns) 선형보간 매핑. /clock 앵커 사이의 기울기 = 그 구간의 국소 RTF.
+    # 따라서 RTF가 시간에 따라 출렁여도 자동으로 보정됨. (구간 밖은 np.interp가 양 끝값으로 클램프)
+    clock_wall = np.array(clock_wall, dtype=np.float64)
+    clock_sim = np.array(clock_sim, dtype=np.float64)
+    order = np.argsort(clock_wall)
+    clock_wall = clock_wall[order]
+    clock_sim = clock_sim[order]
+
+    def wall_to_sim_ns(wall_ns):
+        return np.interp(wall_ns, clock_wall, clock_sim)
+
+    # 인과 매칭은 bag 기록 시각(나노초) 기준으로 정렬/탐색함
     scans.sort(key=lambda r: r[0])
     drives.sort(key=lambda r: r[0])
 
-    scan_stamps = [s[0] for s in scans]
+    scan_bag_stamps = [s[0] for s in scans]
 
-    # Pass 2: 각 drive에 대해 stamp <= drive_stamp인 가장 최근 scan을 인과적으로 매칭함
-    # (drive보다 미래의 센서값은 절대로 사용하지 않음. 동일 stamp면 그걸 채택)
+    # Pass 2: 각 drive에 대해 bag_ns <= drive_bag_ns인 가장 최근 scan을 인과적으로 매칭함
+    # (drive보다 미래의 센서값은 절대로 사용하지 않음)
     csv_file = open(csv_file_path, 'w', newline='')
     csv_writer = csv.writer(csv_file)
 
@@ -107,19 +131,26 @@ def extract_bag_to_csv(bag_dir_path, save_dir='/root/f1tenth_ws/f1tenth_data', r
     count_written = 0
     skipped_no_match = 0
 
-    for drive_stamp, steer, desired_speed in drives:
-        # bisect_right - 1 : drive_stamp 이하 중 가장 마지막 인덱스 (동일 stamp 존재시 그걸 선택)
-        s_idx = bisect.bisect_right(scan_stamps, drive_stamp) - 1
+    for drive_bag_ns, steer, desired_speed in drives:
+        # bisect_right - 1 : drive_bag_ns 이하 중 가장 마지막 인덱스
+        s_idx = bisect.bisect_right(scan_bag_stamps, drive_bag_ns) - 1
 
         if s_idx < 0:
             # drive 시점 이전에 아직 도착한 scan이 없는 경우 스킵 (인과성 보장)
             skipped_no_match += 1
             continue
 
-        scan_stamp, ranges_row = scans[s_idx]
-        lidar_delay = (drive_stamp - scan_stamp) * 1e-9
+        scan_bag_ns, ranges_row = scans[s_idx]
 
-        row = [drive_stamp * 1e-9, steer, desired_speed, lidar_delay] + ranges_row
+        # bag_ts(wall)를 /clock 보간으로 고해상도 sim-time으로 환산
+        drive_sim_ns = wall_to_sim_ns(drive_bag_ns)
+        scan_sim_ns = wall_to_sim_ns(scan_bag_ns)
+
+        # lidar_delay: RTF 보정된 sim-time 기준 scan-drive 지연 (실제 로봇이 겪을 지연과 일치)
+        lidar_delay = (drive_sim_ns - scan_sim_ns) * 1e-9
+
+        # time 컬럼: drive의 고해상도 sim-time
+        row = [drive_sim_ns * 1e-9, steer, desired_speed, lidar_delay] + ranges_row
         csv_writer.writerow(row)
         count_written += 1
 

@@ -112,7 +112,7 @@ def generate_launch_description():
         executable='agent_node',
         name='end2race_agent',
         namespace=namespace,
-        output='screen',
+        output='log',
         parameters=[config_path, {'use_sim_time': True}] # YAML 파일을 직접 리스트에 추가
     )
 

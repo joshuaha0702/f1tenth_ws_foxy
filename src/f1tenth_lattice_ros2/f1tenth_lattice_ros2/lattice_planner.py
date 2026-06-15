@@ -1,5 +1,6 @@
 import os
 import logging
+import time
 import yaml
 import numpy as np
 from PIL import Image
@@ -71,6 +72,7 @@ class LatticePlanner:
         self.time_interval = conf.tracker_steps * 0.01
         self.last_s = 0.0
         self.step = 0
+        self.last_timing = None
 
         self.tracker = PurePursuitPlanner(conf, wpt_path, wb=wb)
         self.conf = conf
@@ -129,6 +131,7 @@ class LatticePlanner:
             pose_x, pose_y, pose_theta, velocity, waypoints, lh_grid
         )
 
+        _t_clothoid0 = time.perf_counter()
         all_traj = []
         all_traj_clothoid = []
         for point in self.goal_grid:
@@ -141,7 +144,15 @@ class LatticePlanner:
 
         all_traj = np.array(all_traj)
         all_traj_clothoid = np.array(all_traj_clothoid)
+        _t_clothoid1 = time.perf_counter()
         traj_cost, abs_v_cost, collision_cost = self._eval(all_traj, all_traj_clothoid, opp_poses, ego_pose)
+        _t_eval1 = time.perf_counter()
+        clothoid_ms = (_t_clothoid1 - _t_clothoid0) * 1000.0
+        eval_ms = (_t_eval1 - _t_clothoid1) * 1000.0
+        if clothoid_ms + eval_ms > 30.0:
+            self.last_timing = (clothoid_ms, eval_ms)
+        else:
+            self.last_timing = None
         self.all_costs = traj_cost + abs_v_cost + collision_cost
 
         best_traj_idx = np.argmin(self.all_costs)
