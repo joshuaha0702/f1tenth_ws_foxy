@@ -30,9 +30,11 @@ def stamp_to_ns(stamp):
     return int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
 
 
-def extract_bag_to_csv(bag_dir_path, save_dir='/root/f1tenth_ws/f1tenth_data', robot_name='car1'):
+def extract_bag_to_csv(bag_dir_path, save_dir='/root/f1tenth_ws/f1tenth_data', robot_name='car1',
+                       min_row_gap_s=0.006):
     scan_downsample_factor = 360
     scan_factor = 1080 // scan_downsample_factor
+    min_row_gap_ns = min_row_gap_s * 1e9
 
     save_path = os.path.expanduser(save_dir)
     os.makedirs(save_path, exist_ok=True)
@@ -130,8 +132,19 @@ def extract_bag_to_csv(bag_dir_path, save_dir='/root/f1tenth_ws/f1tenth_data', r
 
     count_written = 0
     skipped_no_match = 0
+    skipped_burst = 0
+    last_written_sim_ns = None
 
     for drive_bag_ns, steer, desired_speed in drives:
+        # bag_ts(wall)를 /clock 보간으로 고해상도 sim-time으로 환산
+        drive_sim_ns = wall_to_sim_ns(drive_bag_ns)
+
+        # 버스트 제거: 직전에 "기록된" 행과의 sim-time 간격이 너무 좁으면 생략함.
+        # (직전 기록 행 기준이라, 출력 행들은 항상 min_row_gap_s 이상 간격을 유지)
+        if last_written_sim_ns is not None and (drive_sim_ns - last_written_sim_ns) <= min_row_gap_ns:
+            skipped_burst += 1
+            continue
+
         # bisect_right - 1 : drive_bag_ns 이하 중 가장 마지막 인덱스
         s_idx = bisect.bisect_right(scan_bag_stamps, drive_bag_ns) - 1
 
@@ -141,9 +154,6 @@ def extract_bag_to_csv(bag_dir_path, save_dir='/root/f1tenth_ws/f1tenth_data', r
             continue
 
         scan_bag_ns, ranges_row = scans[s_idx]
-
-        # bag_ts(wall)를 /clock 보간으로 고해상도 sim-time으로 환산
-        drive_sim_ns = wall_to_sim_ns(drive_bag_ns)
         scan_sim_ns = wall_to_sim_ns(scan_bag_ns)
 
         # lidar_delay: RTF 보정된 sim-time 기준 scan-drive 지연 (실제 로봇이 겪을 지연과 일치)
@@ -153,9 +163,11 @@ def extract_bag_to_csv(bag_dir_path, save_dir='/root/f1tenth_ws/f1tenth_data', r
         row = [drive_sim_ns * 1e-9, steer, desired_speed, lidar_delay] + ranges_row
         csv_writer.writerow(row)
         count_written += 1
+        last_written_sim_ns = drive_sim_ns
 
     csv_file.close()
-    print(f"추출 완료! 총 {count_written}개의 행이 기록됨. (인과적 매칭 실패로 스킵: {skipped_no_match})")
+    print(f"추출 완료! 총 {count_written}개의 행이 기록됨. "
+          f"(인과 매칭 실패 스킵: {skipped_no_match}, 버스트 스킵(<={min_row_gap_s*1000:.0f}ms): {skipped_burst})")
     print(f"저장 위치: {csv_file_path}")
 
 
