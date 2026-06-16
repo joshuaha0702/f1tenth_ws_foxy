@@ -13,36 +13,52 @@ def generate_launch_description():
     description_pkg = get_package_share_directory('racecar_description')
     lattice_pkg = get_package_share_directory('f1tenth_lattice_ros2')
 
+    # ============================================================
+    # Launch 인자 정의 (전부 여기 모음)
+    # ============================================================
+    namespace_arg = DeclareLaunchArgument(
+        'namespace', default_value='car1',
+        description='car1 네임스페이스'
+    )
+    head2head_arg = DeclareLaunchArgument(
+        'head2head', default_value='true',
+        description='Lattice 플래너로 정속 주행하는 car2를 함께 생성 (true/false)'
+    )
+    model_path_arg = DeclareLaunchArgument(
+        'model_path',
+        default_value=os.path.join(end2race_pkg, 'models', 'end2race.pth'),
+        description='end2race 모델 가중치(.pth) 경로'
+    )
+    x_arg = DeclareLaunchArgument('x', default_value='6.4', description='car1 스폰 X')
+    y_arg = DeclareLaunchArgument('y', default_value='16.0', description='car1 스폰 Y')
+    x2_arg = DeclareLaunchArgument('x2', default_value='6.4', description='car2 스폰 X')
+    y2_arg = DeclareLaunchArgument('y2', default_value='12.0', description='car2 스폰 Y')
+
+    # LaunchConfiguration 핸들
+    namespace = LaunchConfiguration('namespace')
+    car2_enabled = LaunchConfiguration('head2head')
+    model_path = LaunchConfiguration('model_path')
+    spawn_x = LaunchConfiguration('x')
+    spawn_y = LaunchConfiguration('y')
+    spawn_x2 = LaunchConfiguration('x2')
+    spawn_y2 = LaunchConfiguration('y2')
+    spawn_yaw = PythonExpression(['str(float("-90.0") * 3.14159265358 / 180.0)'])
+    spawn_yaw2 = PythonExpression(['str(float("-90.0") * 3.14159265358 / 180.0)'])
+
+    all_launch_args = [namespace_arg, head2head_arg, model_path_arg, x_arg, y_arg, x2_arg, y2_arg]
+
+    # ============================================================
+    # 노드 / 액션 정의
+    # ============================================================
     kill_gazebo = ExecuteProcess(
         cmd=['bash', '-c', 'pkill -9 -f gzserver; pkill -9 -f gzclient; sleep 1.5'],
         output='screen'
     )
 
-    namespace_arg = DeclareLaunchArgument('namespace', default_value='car1')
-    namespace = LaunchConfiguration('namespace')
-
-    # 초기 스폰 위치
-    spawn_x = LaunchConfiguration('x', default='6.4')
-    spawn_y = LaunchConfiguration('y', default='16.0')
-    spawn_yaw = PythonExpression(['str(float("-90.0") * 3.14159265358 / 180.0)'])
-
     spawn_car_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(description_pkg, 'launch', 'spawn_car.launch.py')),
         launch_arguments={'x': spawn_x, 'y': spawn_y, 'yaw': spawn_yaw}.items()
     )
-
-    # car2 (lattice 플래너 기반 정속 주행) 활성화 여부
-    car2_arg = DeclareLaunchArgument(
-        'car2',
-        default_value='true',
-        description='Lattice 플래너로 정속 주행하는 car2를 함께 생성 (true/false)'
-    )
-    car2_enabled = LaunchConfiguration('car2')
-
-    # car2 초기 스폰 위치
-    spawn_x2 = LaunchConfiguration('x2', default='6.4')
-    spawn_y2 = LaunchConfiguration('y2', default='12.0')
-    spawn_yaw2 = PythonExpression(['str(float("-90.0") * 3.14159265358 / 180.0)'])
 
     spawn_car2_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(description_pkg, 'launch', 'spawn_car.launch.py')),
@@ -104,22 +120,34 @@ def generate_launch_description():
         condition=IfCondition(car2_enabled)
     )
 
+    # Agent 노드 (car1) — config 뒤 dict가 우선이라 model_path가 config 값을 덮어씀
     config_path = os.path.join(end2race_pkg, 'config', 'end2race_config.yaml')
-
-    # Agent 노드 설정
     agent_node = Node(
         package=pkg_name,
         executable='agent_node',
         name='end2race_agent',
         namespace=namespace,
         output='log',
-        parameters=[config_path, {'use_sim_time': True}] # YAML 파일을 직접 리스트에 추가
+        parameters=[config_path, {'use_sim_time': True, 'model_path': model_path}]
     )
 
-    rviz_node = Node(
-        package='rviz2',
-        executable='rviz2',
-        arguments=['-d', os.path.join(description_pkg, 'rviz', 'f1tenth_default.rviz')],
+    # Ackermann to Twist Bridge — car1
+    # agent_node가 publish하는 /car1/drive(AckermannDriveStamped)를
+    # Gazebo가 구독하는 /car1/drive_twist(Twist)로 변환
+    bridge_node = Node(
+        package='f1tenth_fgm_ros2',
+        executable='ackermann_to_twist.py',
+        name='ackermann_to_twist',
+        namespace=namespace,
+        output='screen'
+    )
+
+    # rviz의 tf2 frame 경고(console_bridge)가 stderr로 직접 쏟아져 콘솔을 도배하므로,
+    # 셸에서 stderr를 버려서 막음. (output='log'로는 C++ 레벨 stderr가 안 막힘)
+    _rviz_cfg = os.path.join(description_pkg, 'rviz', 'f1tenth_default.rviz')
+    rviz_node = ExecuteProcess(
+        cmd=['bash', '-c', f'exec rviz2 -d "{_rviz_cfg}" 2>/dev/null'],
+        output='log',
     )
 
     map_to_odom_node = Node(
@@ -137,10 +165,10 @@ def generate_launch_description():
     delayed_launch = TimerAction(
         period=2.0,
         actions=[
-            spawn_car_launch, agent_node, rviz_node, map_to_odom_node, laser_tf_node,
+            spawn_car_launch, agent_node, bridge_node, rviz_node, map_to_odom_node, laser_tf_node,
             spawn_car2_launch, lattice_node_car2, bridge_node_car2,
             map_to_odom_node_car2, laser_tf_node_car2,
         ]
     )
 
-    return LaunchDescription([namespace_arg, car2_arg, kill_gazebo, delayed_launch])
+    return LaunchDescription(all_launch_args + [kill_gazebo, delayed_launch])

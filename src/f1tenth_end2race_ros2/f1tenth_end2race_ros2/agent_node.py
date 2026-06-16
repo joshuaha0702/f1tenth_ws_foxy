@@ -27,7 +27,7 @@ class End2RaceAgent(Node):
         self.model = End2Race(hidden_scale=self.hidden_scale).to(self.device)
         if os.path.exists(self.model_path):
             self.model.load_state_dict(torch.load(self.model_path, map_location=self.device))
-            self.get_logger().info(f"[{self.robot_name}] 모델 로드 성공: {self.model_path}")
+            self.get_logger().info(f"[{self.robot_name}] 모델 로드 성공: {self.model_path}, device: {self.device}")
         else:
             self.get_logger().error(f"[{self.robot_name}] 모델 파일을 찾을 수 없습니다: {self.model_path}")
         

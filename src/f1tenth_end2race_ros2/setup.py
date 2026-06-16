@@ -14,7 +14,7 @@ setup(
         (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
         (os.path.join('share', package_name, 'maps'), glob('maps/*')),
-        (os.path.join('share', package_name, 'tools'), glob('tools/*.pth')),
+        (os.path.join('share', package_name, 'models'), glob('models/*.pth')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
