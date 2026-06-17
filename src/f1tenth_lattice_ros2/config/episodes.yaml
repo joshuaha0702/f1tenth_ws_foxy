@@ -21,12 +21,19 @@ traj_v_scale:
   car1: { min: 0.9, max: 1.0 }
   car2: { min: 0.3, max: 0.7 }
 
+# 스폰 위치 및 자세 섭동: 중심라인 기준 수직 방향 lateral offset과 heading에 균등 분포 부여.
+# lateral_offset_m: 중심라인 수직 방향 변위 최대값 (m). uniform(-val, +val). 0.0이면 섭동 없음.
+# yaw_deg:          heading 각도 섭동 최대값 (deg). uniform(-val, +val). 0.0이면 섭동 없음.
+spawn_perturbation:
+  lateral_offset_m: 0.3   # ±0.3m 균등 분포
+  yaw_deg: 10.0             # ±10도 균등 분포
+
 # 정수 지정 시 동일 시드로 매번 같은 (ego_idx, offset, car1_v_scale, car2_v_scale) 시퀀스 생성.
 # null로 두면 매번 다른 결과 (시스템 시간 기반).
 random_seed: 42
 
 # 에피소드 1개당 sim 시간 기준 녹화 길이 (초)
-sequence_duration_sec: 15.0
+sequence_duration_sec: 3.0
 
 # 텔레포트 후 차량/물리가 안정화될 시간 (sim 초)
 settle_time_sec: 3.0

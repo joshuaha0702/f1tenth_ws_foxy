@@ -49,9 +49,12 @@ class EpisodeManagerNode(Node):
 
         self.declare_parameter('episodes_yaml', '')
         self.declare_parameter('head2head', False)
+        self.declare_parameter('record', False)
 
         yaml_path = self.get_parameter('episodes_yaml').value
         self.head2head = bool(self.get_parameter('head2head').value)
+        record_param = self.get_parameter('record').value
+        self.do_record = str(record_param).lower() == 'true'
 
         # yaml 로드 + 엄격 검증. 실패 시 fatal 로그 후 즉시 종료(비정상 exit code).
         self.cfg = self._load_and_validate_yaml(yaml_path)
@@ -127,7 +130,8 @@ class EpisodeManagerNode(Node):
 
         self.get_logger().info(
             f'EpisodeManager loaded: {len(self.episodes)} episodes, '
-            f'duration={self.sequence_duration_sec}s sim, head2head={self.head2head}'
+            f'duration={self.sequence_duration_sec}s sim, head2head={self.head2head}, '
+            f'record={self.do_record}'
         )
 
         # 에피소드 루프는 별도 스레드에서 돌림.
@@ -288,6 +292,21 @@ class EpisodeManagerNode(Node):
                     f'random_seed must be an integer or null, got {seed!r}'
                 )
 
+        # ---- spawn_perturbation (옵션) ----
+        perturb = cfg.get('spawn_perturbation')
+        if perturb is not None:
+            if not isinstance(perturb, dict):
+                self._yaml_die('spawn_perturbation must be a mapping or null')
+            for key in ('lateral_offset_m', 'yaw_deg'):
+                val = perturb.get(key)
+                if val is not None:
+                    try:
+                        v = float(val)
+                    except (TypeError, ValueError):
+                        self._yaml_die(f'spawn_perturbation.{key} must be a number')
+                    if v < 0:
+                        self._yaml_die(f'spawn_perturbation.{key} must be >= 0')
+
         # ---- settle_time_sec (옵션) ----
         if 'settle_time_sec' in cfg:
             try:
@@ -355,15 +374,30 @@ class EpisodeManagerNode(Node):
                 f'raceline too short ({n_rows} rows) for opponent_offset.max={offset_max}'
             )
 
+        perturb_cfg = self.cfg.get('spawn_perturbation', {}) or {}
+        lateral_half = float(perturb_cfg.get('lateral_offset_m', 0.0))
+        yaw_half_deg = float(perturb_cfg.get('yaw_deg', 0.0))
+
         rng = random.Random(seed) if seed is not None else random.Random()
         self.get_logger().info(
             f'Generating {num_episodes} episodes from raceline ({n_rows} rows), '
-            f'opponent offset ∈ [{offset_min}, {offset_max}], seed={seed}'
+            f'opponent offset ∈ [{offset_min}, {offset_max}], seed={seed}, '
+            f'perturbation: lateral=uniform(±{lateral_half}m), yaw=uniform(±{yaw_half_deg}deg)'
         )
 
         def row_to_pose(row):
             x, y, psi = row
-            return {'x': x, 'y': y, 'yaw_deg': math.degrees(psi)}
+            # 중심라인 수직 방향(법선)으로 lateral offset 균등 샘플링
+            lat = rng.uniform(-lateral_half, lateral_half) if lateral_half > 0.0 else 0.0
+            yaw_delta = rng.uniform(-yaw_half_deg, yaw_half_deg) if yaw_half_deg > 0.0 else 0.0
+            # 법선 벡터: heading psi 기준 90도 회전 → (-sin(psi), cos(psi))
+            px = x - math.sin(psi) * lat
+            py = y + math.cos(psi) * lat
+            return (
+                {'x': px, 'y': py, 'yaw_deg': math.degrees(psi) + yaw_delta},
+                lat,
+                yaw_delta,
+            )
 
         def sample_v_scale(cfg):
             if not cfg:
@@ -375,10 +409,18 @@ class EpisodeManagerNode(Node):
             ego_idx = rng.randrange(n_rows)
             offset = rng.randint(offset_min, offset_max)
             opp_idx = (ego_idx + offset) % n_rows
+            car1_pose, lat1, yaw1 = row_to_pose(raceline[ego_idx])
+            car2_pose, lat2, yaw2 = row_to_pose(raceline[opp_idx])
             ep = {
-                'car1': row_to_pose(raceline[ego_idx]),
-                'car2': row_to_pose(raceline[opp_idx]),
-                '_meta': {'ego_idx': ego_idx, 'opp_idx': opp_idx, 'offset': offset},
+                'car1': car1_pose,
+                'car2': car2_pose,
+                '_meta': {
+                    'ego_idx': ego_idx, 'opp_idx': opp_idx, 'offset': offset,
+                    'car1_lateral_m': round(lat1, 3),
+                    'car1_yaw_delta_deg': round(yaw1, 2),
+                    'car2_lateral_m': round(lat2, 3),
+                    'car2_yaw_delta_deg': round(yaw2, 2),
+                },
             }
             v1 = sample_v_scale(v_cfg_car1)
             v2 = sample_v_scale(v_cfg_car2)
@@ -572,7 +614,14 @@ class EpisodeManagerNode(Node):
             f'opp_idx={meta.get("opp_idx")}, offset={meta.get("offset")}'
         )
         self.get_logger().info(
-            f'[{ep_label}] car1={ep.get("car1")}, car2={ep.get("car2")}'
+            f'[{ep_label}] car1={ep.get("car1")}  '
+            f'(lat={meta.get("car1_lateral_m", 0.0):+.3f}m, '
+            f'yaw_delta={meta.get("car1_yaw_delta_deg", 0.0):+.2f}deg)'
+        )
+        self.get_logger().info(
+            f'[{ep_label}] car2={ep.get("car2")}  '
+            f'(lat={meta.get("car2_lateral_m", 0.0):+.3f}m, '
+            f'yaw_delta={meta.get("car2_yaw_delta_deg", 0.0):+.2f}deg)'
         )
         if 'car1_v_scale' in ep or 'car2_v_scale' in ep:
             self.get_logger().info(
@@ -603,13 +652,14 @@ class EpisodeManagerNode(Node):
             t_settle_end = self.sim_time_sec + self.settle_time_sec
             self._spin_until_sim_time(t_settle_end, max_wall_sec=self.settle_time_sec * 5 + 5)
 
-        # 4) bag record subprocess
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        staging_bag_path = os.path.join(self.staging_dir, f'{ep_label}_{timestamp}')
-        bag_proc = self._start_bag_record(staging_bag_path)
-        # bag이 /car1/drive 토픽 구독을 잡을 짧은 시간만 줌
-        # (이 직전까지 planner는 STOP 상태라 publish가 없어 누락 위험 없음)
-        self._spin_for_wall(0.5)
+        # 4) bag record subprocess (record=true 일 때만)
+        bag_proc = None
+        if self.do_record:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            staging_bag_path = os.path.join(self.staging_dir, f'{ep_label}_{timestamp}')
+            bag_proc = self._start_bag_record(staging_bag_path)
+            # bag이 /car1/drive 토픽 구독을 잡을 짧은 시간만 줌
+            self._spin_for_wall(0.5)
 
         # 5) traj_v_scale 갱신 (START 전에 박아두면 첫 plan부터 새 값 사용)
         # SetParameters 서비스는 reliable이라 단발 호출로 충분, 응답으로 성공 여부도 확인됨
@@ -658,21 +708,24 @@ class EpisodeManagerNode(Node):
 
         # 7) STOP + bag flush
         self._monitoring_collision = False
-        self._stop_bag_record(bag_proc)
         self._publish_control('STOP')
-        
+        if bag_proc is not None:
+            self._stop_bag_record(bag_proc)
 
-        # 8) 경로 분리
+        # 8) 경로 분리 (record=true 일 때만)
         collided = self._collision_seen
-        target_root = self.collision_dir if collided else self.clean_dir
-        final_path = os.path.join(target_root, os.path.basename(staging_bag_path))
-        try:
-            shutil.move(staging_bag_path, final_path)
-        except Exception as e:
-            self.get_logger().error(f'[{ep_label}] move failed: {e}')
-            final_path = staging_bag_path
         verdict = f'COLLISION ({self._collision_source})' if collided else 'CLEAN'
-        self.get_logger().info(f'[{ep_label}] {verdict} -> {final_path}')
+        if self.do_record:
+            target_root = self.collision_dir if collided else self.clean_dir
+            final_path = os.path.join(target_root, os.path.basename(staging_bag_path))
+            try:
+                shutil.move(staging_bag_path, final_path)
+            except Exception as e:
+                self.get_logger().error(f'[{ep_label}] move failed: {e}')
+                final_path = staging_bag_path
+            self.get_logger().info(f'[{ep_label}] {verdict} -> {final_path}')
+        else:
+            self.get_logger().info(f'[{ep_label}] {verdict} (no bag recorded)')
 
 
 def main(args=None):

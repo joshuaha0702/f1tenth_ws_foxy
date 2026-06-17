@@ -154,13 +154,11 @@ def generate_launch_description():
         output='screen'
     )
 
-    # RViz2 with existing config (headless 시 비활성화)
-    rviz_node = Node(
-        package='rviz2',
-        executable='rviz2',
-        name='rviz2',
-        arguments=['-d', os.path.join(description_pkg, 'rviz', 'f1tenth_default.rviz')],
-        output='screen',
+    # RViz2 with existing config (headless 시 비활성화) — stderr 버려서 TF 경고 제거
+    _rviz_cfg = os.path.join(description_pkg, 'rviz', 'f1tenth_default.rviz')
+    rviz_node = ExecuteProcess(
+        cmd=['bash', '-c', f'exec rviz2 -d "{_rviz_cfg}" 2>/dev/null'],
+        output='log',
         condition=UnlessCondition(headless)
     )
 
@@ -256,11 +254,10 @@ def generate_launch_description():
         ]
     )
 
-    # 다중 에피소드 매니저 (episodes 인자가 비어있지 않을 때만 실행)
-    # 단일 bag 모드와 동일하게 record가 true일 때만 의미가 있음.
+    # 다중 에피소드 매니저 (episodes 인자가 비어있지 않을 때 실행)
+    # record와 독립적으로 동작. record=false 시 bag 기록만 건너뜀.
     episode_manager_condition = PythonExpression([
-        '"', LaunchConfiguration('record'), '".lower() == "true" and "',
-        LaunchConfiguration('episodes'), '" != ""'
+        '"', LaunchConfiguration('episodes'), '" != ""'
     ])
     episode_manager_node = Node(
         package='f1tenth_lattice_ros2',
@@ -271,6 +268,7 @@ def generate_launch_description():
         parameters=[{
             'episodes_yaml': LaunchConfiguration('episodes'),
             'head2head': LaunchConfiguration('head2head'),
+            'record': LaunchConfiguration('record'),
             'use_sim_time': True,
         }]
     )
