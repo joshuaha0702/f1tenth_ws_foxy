@@ -88,26 +88,25 @@ class End2Race(nn.Module):
         
         return actions, last_hidden
 
-    @torch.no_grad()
-    def inference_step(self, lidar_data: np.ndarray, current_speed: float, 
+    def set_inference_device(self, device: torch.device):
+        """추론 시 사용할 device를 캐싱 (init 후 1회 호출)"""
+        self._infer_device = device
+        # 입력 텐서를 미리 할당해 매 스텝 allocation 제거
+        self._x_buf = torch.zeros(1, 1, self.num_features, dtype=torch.float32, device=device)
+        self._s_buf = torch.zeros(1, 1, 1, dtype=torch.float32, device=device)
+
+    @torch.inference_mode()
+    def inference_step(self, lidar_data: np.ndarray, current_speed: float,
                        prev_hidden: Optional[torch.Tensor] = None) -> Tuple[np.ndarray, torch.Tensor]:
         """
         ROS 2 Gazebo 환경에서 매 프레임마다 호출하는 실시간 추론 함수
         """
-        self.eval() # 평가 모드 강제
-        
-        # 1. 모델이 현재 위치한 장치(CPU/GPU) 확인
-        device = next(self.parameters()).device
-        
-        # 2. 입력 데이터를 Tensor로 변환 및 차원 확장 [Batch=1, Seq=1, Feature]
-        # Gazebo의 numpy 데이터를 모델 장치에 맞게 전송
-        x_tensor = torch.as_tensor(lidar_data, dtype=torch.float32, device=device).view(1, 1, -1)
-        speed_tensor = torch.as_tensor([[current_speed]], dtype=torch.float32, device=device).view(1, 1, 1)
-        
-        # 3. 모델 추론 (기존 forward 호출)
-        actions_tensor, next_hidden = self.forward(x_tensor, speed_tensor, prev_hidden)
-        
-        # 4. 결과를 numpy 배열로 변환하여 반환
+        device = self._infer_device
+
+        self._x_buf.copy_(torch.as_tensor(lidar_data, dtype=torch.float32).view(1, 1, -1))
+        self._s_buf[0, 0, 0] = current_speed
+
+        actions_tensor, next_hidden = self.forward(self._x_buf, self._s_buf, prev_hidden)
+
         actions = actions_tensor.squeeze().cpu().numpy()
-        
         return actions, next_hidden

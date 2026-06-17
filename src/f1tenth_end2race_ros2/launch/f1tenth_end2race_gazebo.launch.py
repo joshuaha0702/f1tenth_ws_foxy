@@ -14,7 +14,7 @@ def generate_launch_description():
     lattice_pkg = get_package_share_directory('f1tenth_lattice_ros2')
 
     # ============================================================
-    # Launch 인자 정의 (전부 여기 모음)
+    # Launch 인자 정의
     # ============================================================
     namespace_arg = DeclareLaunchArgument(
         'namespace', default_value='car1',
@@ -128,7 +128,7 @@ def generate_launch_description():
         name='end2race_agent',
         namespace=namespace,
         output='log',
-        parameters=[config_path, {'use_sim_time': True, 'model_path': model_path}]
+        parameters=[config_path, {'use_sim_time': False, 'model_path': model_path}]
     )
 
     # Ackermann to Twist Bridge — car1
