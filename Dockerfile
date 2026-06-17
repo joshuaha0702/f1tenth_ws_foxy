@@ -1,6 +1,6 @@
 FROM osrf/ros:foxy-desktop
 
-# 1. 기본 유틸리티 및 빌드 도구 설치
+# 1. Install basic utilities and build tools
 RUN apt-get update && apt-get install -y \
     python3-pip \
     python3-colcon-common-extensions \
@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
     libeigen3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. SLAM 및 Navigation2 관련 패키지 설치
+# 2. Install SLAM and Navigation2 packages
 RUN apt-get update && apt-get install -y \
     ros-foxy-slam-toolbox \
     ros-foxy-navigation2 \
@@ -19,8 +19,7 @@ RUN apt-get update && apt-get install -y \
     ros-foxy-robot-localization \
     && rm -rf /var/lib/apt/lists/*
 
-# 3. F1TENTH 전용 의존성 (Ackermann, 센서 등)
-# 3. F1TENTH 및 시뮬레이션 핵심 의존성 추가
+# 3. Install F1TENTH and simulation dependencies
 RUN apt-get update && apt-get install -y \
     ros-foxy-ackermann-msgs \
     ros-foxy-joy \
@@ -41,18 +40,25 @@ RUN apt-get update && apt-get install -y \
     ros-foxy-gazebo-ros-pkgs \
     && rm -rf /var/lib/apt/lists/*
 
-RUN apt-get update && apt-get install -y \
-    python3-numpy \
-    python3-numba \
-    python3-scipy \
-    python3-pandas \
-    && rm -rf /var/lib/apt/lists/*
+# 4. Install Python packages with pinned versions
+RUN python3 -m pip install --no-cache-dir \
+    "typing-extensions==4.13.2" \
+    "numpy==1.23.5" \
+    "llvmlite==0.39.1" \
+    "numba==0.56.4" \
+    "scipy==1.10.1" \
+    "pandas==2.0.3" \
+    pyclothoids \
+    rosbags \
 
-RUN pip3 install --no-cache-dir pyclothoids rosbags
+# 5. Install PyTorch for CUDA 11.8 <- Check your CUDA version
+RUN python3 -m pip install --no-cache-dir \
+    torch==2.4.1 \
+    torchvision==0.19.1 \
+    torchaudio==2.4.1 \
+    --index-url https://download.pytorch.org/whl/cu118
 
-RUN sudo rosdep update --include-eol-distros || true
-
-# 5. 작업 환경 설정 (편의성)
+# 7. Configure shell environment
 RUN echo "source /opt/ros/foxy/setup.bash" >> /root/.bashrc \
     && echo "alias cb='cd /root/f1tenth_ws && colcon build --symlink-install && source /root/f1tenth_ws/install/setup.bash'" >> /root/.bashrc \
     && echo "alias cs='source /root/f1tenth_ws/install/setup.bash'" >> /root/.bashrc \
