@@ -21,6 +21,11 @@ class End2RaceAgent(Node):
         self.declare_parameter('control.max_steer', 0.52)
         self.declare_parameter('control.min_steer', -0.52)
         self.declare_parameter('control.max_speed', 4.0)
+        # 학습 시 라이다 FOV (시뮬레이터 270° = ±2.35619 rad 기준).
+        # 360개 feature가 이 각도 범위 전체를 균일하게 덮는다고 가정.
+        self.declare_parameter('lidar.fov_min', -2.35619)
+        self.declare_parameter('lidar.fov_max', 2.35619)
+        self.declare_parameter('lidar.max_range', 30.0)
 
         self.robot_name = self.get_parameter('robot_name').value
         self.model_path = self.get_parameter('model_path').value
@@ -28,6 +33,9 @@ class End2RaceAgent(Node):
         self.max_steer = self.get_parameter('control.max_steer').value
         self.min_steer = self.get_parameter('control.min_steer').value
         self.max_speed = self.get_parameter('control.max_speed').value
+        self.fov_min = self.get_parameter('lidar.fov_min').value
+        self.fov_max = self.get_parameter('lidar.fov_max').value
+        self.lidar_max_range = self.get_parameter('lidar.max_range').value
         
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.num_features = 360 # model.num_features와 일치
@@ -53,6 +61,11 @@ class End2RaceAgent(Node):
         self.latest_ranges = None
         self.latest_scan_stamp = None
 
+        # 각도 기준 다운스케일 매핑 캐시 (라이다 기하가 바뀔 때만 재계산)
+        self._scan_cache_key = None
+        self._scan_bin_idx = None
+        self._scan_valid = None
+
         # 4. ROS 2 Pub/Sub — ReentrantCallbackGroup으로 scan/drive 병렬 실행
         cb_group = ReentrantCallbackGroup()
         self.scan_sub = self.create_subscription(LaserScan, f'/{self.robot_name}/scan', self.scan_callback, 10, callback_group=cb_group)
@@ -62,24 +75,43 @@ self.drive_pub = self.create_publisher(AckermannDriveStamped, f'/{self.robot_nam
         wall_clock = Clock(clock_type=ClockType.STEADY_TIME)
         self.drive_timer = self.create_timer(1.0 / 100.0, self.drive_callback, clock=wall_clock, callback_group=cb_group)
 
+    def _build_scan_mapping(self, n_in, angle_min, angle_increment):
+        """들어오는 각 빔의 각도를 학습 FOV 기준 360개 bin에 매핑한다.
+
+        라이다 포인트 수나 FOV가 달라도 360개 feature가 항상 학습 시점의
+        각도 범위(self.fov_min ~ self.fov_max)를 균일하게 덮도록 보장한다.
+        """
+        angles = angle_min + np.arange(n_in) * angle_increment
+        edges = np.linspace(self.fov_min, self.fov_max, self.num_features + 1)
+        # 각 빔이 속하는 bin 인덱스 (FOV 밖 빔은 valid=False로 제외)
+        bin_idx = np.digitize(angles, edges) - 1
+        valid = (bin_idx >= 0) & (bin_idx < self.num_features)
+        self._scan_bin_idx = bin_idx[valid]
+        self._scan_valid = valid
+        self._scan_cache_key = (n_in, angle_min, angle_increment)
+
+        covered = np.unique(self._scan_bin_idx).size
+        if covered < self.num_features:
+            self.get_logger().warn(
+                f"[{self.robot_name}] 라이다 FOV가 학습 범위를 일부만 덮습니다 "
+                f"({covered}/{self.num_features} bin). 빈 bin은 max_range로 채움."
+            )
+
     def scan_callback(self, msg):
-        ranges = np.array(msg.ranges)
-        ranges = np.where(np.isinf(ranges), 30.0, ranges)
+        ranges = np.asarray(msg.ranges, dtype=np.float64)
+        ranges = np.where(np.isinf(ranges), self.lidar_max_range, ranges)
         ranges = np.where(np.isnan(ranges), 0.0, ranges)
 
-        if len(ranges) != self.num_features:
-            scan_factor = len(ranges) // self.num_features
-            n = self.num_features
-            blocks = ranges[:n * scan_factor].reshape(n, scan_factor)
-            first = ranges[:scan_factor // 2].min()
-            last = ranges[-(scan_factor // 2):].min()
-            paired = np.lib.stride_tricks.as_strided(
-                blocks, shape=(n - 2, 2 * scan_factor),
-                strides=(blocks.strides[0], blocks.strides[1])
-            )
-            ranges = np.concatenate([[first], paired.min(axis=1), [last]])
+        key = (len(ranges), msg.angle_min, msg.angle_increment)
+        if key != self._scan_cache_key:
+            self._build_scan_mapping(len(ranges), msg.angle_min, msg.angle_increment)
 
-        self.latest_ranges = ranges
+        # bin별 최솟값(min-pooling)으로 다운스케일 — 가장 가까운 장애물 보존.
+        # 빔이 없는 bin(FOV 공백)은 max_range로 남아 '먼 자유공간'으로 취급.
+        out = np.full(self.num_features, self.lidar_max_range, dtype=ranges.dtype)
+        np.minimum.at(out, self._scan_bin_idx, ranges[self._scan_valid])
+
+        self.latest_ranges = out
         self.latest_scan_stamp = msg.header.stamp
 
     def drive_callback(self):
