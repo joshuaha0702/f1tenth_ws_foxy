@@ -149,6 +149,52 @@ src/f1tenth_end2race_ros2/models/
 
 ---
 
+## 🚗 End2Race 실차(Real Hardware) 실행
+
+시뮬레이터 없이 **실제 F1TENTH 차량**에서 학습된 모델을 구동하는 런처입니다.  
+LiDAR 드라이버와 VESC가 제공하는 `/scan`, `/drive` 토픽을 그대로 사용합니다.
+
+### 전제 조건
+
+- LiDAR 드라이버 노드와 VESC 드라이버 노드가 이미 실행 중이어야 합니다.  
+- 두 드라이버는 네임스페이스 없이 `/scan`(센서 입력), `/drive`(제어 출력) 토픽을 사용해야 합니다.
+
+### 실행 명령어
+
+```bash
+# 기본 실행 (모델 기본 경로 사용)
+ros2 launch f1tenth_end2race_ros2 f1tenth_end2race_real.launch.py
+
+# 모델 경로 직접 지정
+ros2 launch f1tenth_end2race_ros2 f1tenth_end2race_real.launch.py \
+  model_path:=src/f1tenth_end2race_ros2/models/origin_20260616.pth
+
+# 원격 PC에서 RViz2로 모니터링할 경우
+ros2 launch f1tenth_end2race_ros2 f1tenth_end2race_real.launch.py \
+  use_rviz:=true
+```
+
+### 런치 인자
+
+| 파라미터 | 기본값 | 설명 |
+|---|---|---|
+| `namespace` | `car1` | 로봇 네임스페이스 (내부적으로 토픽 경로에 사용) |
+| `model_path` | 패키지 내 `models/end2race.pth` | 추론에 사용할 모델 가중치 경로 (`.pth`) |
+| `use_rviz` | `false` | RViz2 실행 여부 (실차에선 보통 `false`, 개발 PC 모니터링 시 `true`) |
+
+### 토픽 리맵
+
+`agent_node`는 내부적으로 `/{namespace}/scan`, `/{namespace}/drive` 형태로 토픽을 처리하지만, 런처가 실차 하드웨어 스택의 토픽 이름에 맞게 자동으로 리맵합니다.
+
+| agent_node 내부 토픽 | 실차 하드웨어 토픽 |
+|---|---|
+| `/{namespace}/scan` | `/scan` |
+| `/{namespace}/drive` | `/drive` |
+
+> **Note:** `use_rviz:=true` 시 `racecar_description` 패키지의 기본 RViz 설정이 열립니다. TF와 scan은 하드웨어 드라이버 스택이 제공한다고 가정합니다.
+
+---
+
 # 🏁 Lattice Planner 실행 방법
 
 Clothoid 기반 Lattice 플래너를 이용해 레이스라인을 추종하는 단일 로봇 주행 모드입니다.  
