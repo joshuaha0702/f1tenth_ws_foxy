@@ -67,9 +67,15 @@ class End2RaceAgent(Node):
         self._scan_valid = None
 
         # 4. ROS 2 Pub/Sub — ReentrantCallbackGroup으로 scan/drive 병렬 실행
+        # robot_name이 비어 있으면 '//scan' 같은 잘못된 토픽이 되므로 안전하게 구성.
+        prefix = f'/{self.robot_name.strip("/")}' if self.robot_name and self.robot_name.strip("/") else ''
+        scan_topic = f'{prefix}/scan'
+        drive_topic = f'{prefix}/drive'
+        self.get_logger().info(f"[{self.robot_name}] scan='{scan_topic}', drive='{drive_topic}'")
+
         cb_group = ReentrantCallbackGroup()
-        self.scan_sub = self.create_subscription(LaserScan, f'/{self.robot_name}/scan', self.scan_callback, 10, callback_group=cb_group)
-self.drive_pub = self.create_publisher(AckermannDriveStamped, f'/{self.robot_name}/drive', 10)
+        self.scan_sub = self.create_subscription(LaserScan, scan_topic, self.scan_callback, 10, callback_group=cb_group)
+        self.drive_pub = self.create_publisher(AckermannDriveStamped, drive_topic, 10)
 
         # 50Hz wall clock 기준 (use_sim_time=True여도 실제 시간으로 발화)
         wall_clock = Clock(clock_type=ClockType.STEADY_TIME)
