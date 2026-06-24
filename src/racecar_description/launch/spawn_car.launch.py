@@ -12,8 +12,10 @@ def generate_launch_description():
     # 1. 경로 및 설정값 세팅
     pkg_path = get_package_share_directory('racecar_description')
     xacro_file = os.path.join(pkg_path, 'urdf', 'racecar.xacro')
-    world_file_path = os.path.join(pkg_path, 'worlds', 'simple.world')
-
+    world_file_path = os.path.join(pkg_path, 'worlds', 'interlagos_track.world')
+    # monza -10 5 90
+    # silverstone -10 2 90
+    # interlagos 2 -10 90
     # 런치 인자 선언 (외부에서 namespace, x, y 좌표를 받을 수 있게 함)
     namespace = LaunchConfiguration('namespace')
     spawn_x = LaunchConfiguration('x')
@@ -23,9 +25,9 @@ def generate_launch_description():
     color = LaunchConfiguration('color')
 
     declare_namespace_cmd = DeclareLaunchArgument('namespace', default_value='car1')
-    declare_x_cmd = DeclareLaunchArgument('x', default_value='4.0')
-    declare_y_cmd = DeclareLaunchArgument('y', default_value='2.0')
-    declare_yaw_cmd = DeclareLaunchArgument('yaw', default_value='0.0')
+    declare_x_cmd = DeclareLaunchArgument('x', default_value='2.0') 
+    declare_y_cmd = DeclareLaunchArgument('y', default_value='-10.0')
+    declare_yaw_cmd = DeclareLaunchArgument('yaw', default_value='90.0')
     declare_launch_gazebo_cmd = DeclareLaunchArgument('launch_gazebo', default_value='true')
     declare_gui_cmd = DeclareLaunchArgument('gui', default_value='true',
                                             description='Set to "false" to run Gazebo headless (gzserver only)')
