@@ -18,19 +18,23 @@ xhost +local:docker
 
 ### 2. 컨테이너 실행
 
-설치된 Docker 버전에 따라 명령어가 다를 수 있습니다. 아래 중 작동하는 명령어를 사용하세요.
+본 패키지의 기본 도커 설정은 **NVIDIA GPU 사용**을 권장하고 있습니다.
+GPU 유무에 따라 아래 명령어 중 본인 환경에 맞는 것을 선택해 실행하세요.
 
+**🏎️ GPU가 있는 PC (기본 설정):**
 ```bash
-# Docker Compose V2 (최신):
 docker compose build
 docker compose up -d
-
-# Docker Compose V1 (구버전):
-docker-compose build
-docker-compose up -d
-
-# Tip: 만약 명령어가 둘 다 안 된다면 docker --version으로 도커 설치 여부를 먼저 확인하세요.
 ```
+
+**💻 GPU가 없는 PC (CPU 전용 모드):**
+GPU를 찾을 수 없다는 에러(`could not select device driver "nvidia"`)가 발생하면 `cpu` 프로필을 사용하여 실행하세요.
+```bash
+docker compose build
+docker compose --profile cpu up -d ros2_cpu
+```
+
+> **Tip:** 구버전 Docker를 사용하신다면 `docker compose` 대신 `docker-compose`를 입력하시면 됩니다. 컨테이너를 종료하실 때는 `docker compose down`을 사용하세요.
 
 ### 3. 컨테이너 접속
 
