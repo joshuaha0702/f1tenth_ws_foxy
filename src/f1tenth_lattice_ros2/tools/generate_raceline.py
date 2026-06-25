@@ -218,7 +218,7 @@ def generate_raceline(lane_data, lane_name, args, map_dir):
         'stepsize_interp_after_opt': 0.2,
     }
     reg_smooth_opts = {'k_reg': 3, 's_reg': 0.0}
-    vel_calc_opts = {'dyn_model_exp': 1.0, 'vel_profile_conv_filt_window': 31}
+    vel_calc_opts = {'dyn_model_exp': 1.0}
 
     # vehicle GGV / ax_max_machines – use built-in defaults if files not found
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -275,8 +275,13 @@ def generate_raceline(lane_data, lane_name, args, map_dir):
         **vel_calc_opts,
     )
 
+    if len(vx_profile) == len(el_lengths):
+        vx_profile_ax = np.append(vx_profile, vx_profile[0])
+    else:
+        vx_profile_ax = vx_profile
+
     ax_profile = tph.calc_ax_profile.calc_ax_profile(
-        vx_profile=vx_profile,
+        vx_profile=vx_profile_ax,
         el_lengths=el_lengths,
         eq_length_output=False,
     )
@@ -308,12 +313,12 @@ def _write_default_vehicle_files(out_dir, v_max):
     ax_max = 3.0
     ay_max = 3.0
     ggv = np.column_stack([v_steps, np.full_like(v_steps, ax_max), np.full_like(v_steps, ay_max)])
-    np.savetxt(os.path.join(out_dir, 'ggv.csv'), ggv, delimiter=';',
-               header='# v_mps;ax_max_mps2;ay_max_mps2', comments='', fmt='%.3f')
+    np.savetxt(os.path.join(out_dir, 'ggv.csv'), ggv, delimiter=',',
+               header='# v_mps,ax_max_mps2,ay_max_mps2', comments='', fmt='%.3f')
 
     ax_max_machines = np.column_stack([v_steps, np.full_like(v_steps, ax_max)])
-    np.savetxt(os.path.join(out_dir, 'ax_max_machines.csv'), ax_max_machines, delimiter=';',
-               header='# v_mps;ax_max_mps2', comments='', fmt='%.3f')
+    np.savetxt(os.path.join(out_dir, 'ax_max_machines.csv'), ax_max_machines, delimiter=',',
+               header='# v_mps,ax_max_mps2', comments='', fmt='%.3f')
 
 
 def main():
