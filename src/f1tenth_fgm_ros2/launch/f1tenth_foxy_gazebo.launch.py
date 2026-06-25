@@ -11,14 +11,7 @@ def generate_launch_description():
     fgm_pkg_share = get_package_share_directory('f1tenth_fgm_ros2')
     description_pkg_share = get_package_share_directory('racecar_description')
 
-    # 2. spawn_car.launch.py 포함 (Gazebo + Robot Spawn)
-    spawn_car_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource([
-            os.path.join(description_pkg_share, 'launch', 'spawn_car.launch.py')
-        ])
-    )
-
-    # 3. 네임스페이스 및 FGM 노드 설정
+    # 2. 네임스페이스 및 FGM 노드 설정
     # 외부에서 namespace='car1' 형태로 값을 넘겨받음.
     namespace_arg = DeclareLaunchArgument(
         'namespace',
@@ -27,6 +20,30 @@ def generate_launch_description():
     )
     namespace = LaunchConfiguration('namespace')
 
+    # 추가: 맵과 초기 좌표 인자 선언
+    map_arg = DeclareLaunchArgument('map', default_value='Simple', description='Map name')
+    x_arg = DeclareLaunchArgument('x', default_value='6.4')
+    y_arg = DeclareLaunchArgument('y', default_value='16.0')
+    yaw_arg = DeclareLaunchArgument('yaw', default_value='-1.570796') # -90도를 라디안으로 기본값 설정
+    
+    map_name = LaunchConfiguration('map')
+    spawn_x = LaunchConfiguration('x')
+    spawn_y = LaunchConfiguration('y')
+    spawn_yaw = LaunchConfiguration('yaw')
+
+    # 3. spawn_car.launch.py 포함 (Gazebo + Robot Spawn)
+    spawn_car_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            os.path.join(description_pkg_share, 'launch', 'spawn_car.launch.py')
+        ]),
+        launch_arguments={
+            'namespace': namespace,
+            'map': map_name,
+            'x': spawn_x,
+            'y': spawn_y,
+            'yaw': spawn_yaw
+        }.items()
+    )
     fgm_config = os.path.join(fgm_pkg_share, 'config', 'fgm_config.yaml')
     fgm_node = Node(
         package='f1tenth_fgm_ros2',
@@ -61,6 +78,10 @@ def generate_launch_description():
     # 마스터 실행 리스트 반환
     return LaunchDescription([
         namespace_arg,
+        map_arg,
+        x_arg,
+        y_arg,
+        yaw_arg,
         spawn_car_launch,
         fgm_node,
         bridge_node,

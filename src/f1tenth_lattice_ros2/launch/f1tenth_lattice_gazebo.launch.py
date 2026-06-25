@@ -35,6 +35,14 @@ def generate_launch_description():
     )
     namespace = LaunchConfiguration('namespace')
 
+    # Map name argument
+    map_arg = DeclareLaunchArgument(
+        'map',
+        default_value='Simple',
+        description='Name of the map to load'
+    )
+    map_name = LaunchConfiguration('map')
+
     # Head-to-head mode argument
     head2head_arg = DeclareLaunchArgument(
         'head2head',
@@ -77,6 +85,7 @@ def generate_launch_description():
             'namespace': 'car1',
             'x': spawn_x, 'y': spawn_y, 'yaw': spawn_yaw,
             'gui': gui_value,
+            'map': map_name,
         }.items()
     )
 
@@ -91,14 +100,16 @@ def generate_launch_description():
             'launch_gazebo': 'false',
             'color': 'orange',
             'visualize_lidar': 'false',
+            'map': map_name,
         }.items()
     )
 
     # Paths to lattice planner resources
     # raceline1.csv = center lane (3 lanes: inner=0, center=1, outer=2)
     config_path = os.path.join(lattice_pkg, 'config', 'lattice_config.yaml')
-    map_path = os.path.join(lattice_pkg, 'maps', 'Simple_map')   # no extension
-    raceline_path = os.path.join(lattice_pkg, 'maps', 'raceline1.csv')
+    # Use PythonExpression to dynamically build the path since we are grouping them in folders: maps/<map_name>/<map_name>_map
+    map_path = PythonExpression(["'", lattice_pkg, "/maps/' + '", map_name, "' + '/' + '", map_name, "_map'"])
+    raceline_path = PythonExpression(["'", lattice_pkg, "/maps/' + '", map_name, "' + '/raceline1.csv'"])
 
     # Lattice planner node — car1
     lattice_node = Node(
@@ -296,6 +307,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         namespace_arg,
+        map_arg,
         head2head_arg,
         headless_arg,
         x_arg,
