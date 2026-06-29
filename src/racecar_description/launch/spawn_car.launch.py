@@ -35,7 +35,7 @@ def launch_setup(context, *args, **kwargs):
     # 맵에 따른 world 파일 선택
     if map_name in ['monza', 'silverstone', 'interlagos']:
         world_file_path = os.path.join(pkg_path, 'worlds', f'{map_name}_track.world')
-    elif map_name in ['racecar_walker', 'simple']:
+    elif map_name in ['racecar_walker', 'simple', 'f110_competition','f110_racetrack']:
         world_file_path = os.path.join(pkg_path, 'worlds', f'{map_name}.world')
     else:
         world_file_path = os.path.join(pkg_path, 'worlds', 'simple.world')
