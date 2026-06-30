@@ -85,7 +85,7 @@ class LatticePlanner:
         import os
         map_img_path = os.path.join(os.path.dirname(map_path), image_filename)
         img = np.array(
-            Image.open(map_img_path).transpose(Image.FLIP_TOP_BOTTOM)
+            Image.open(map_img_path).convert('L').transpose(Image.FLIP_TOP_BOTTOM)
         ).astype(np.float64)
         img[img <= 128.] = 0.
         img[img > 128.] = 255.

@@ -55,8 +55,8 @@ def reorder_vertex(image, lane, total_lane_image):
     curr_kernel = np.ones((2, 2), np.uint8)
     iter_cnt = 0
     while True:
-        if iter_cnt > 10:
-            print('ERROR: reorder_vertex did not converge', file=sys.stderr)
+        if iter_cnt > 100:
+            print('ERROR: reorder_vertex did not converge after 100 iterations', file=sys.stderr)
             sys.exit(1)
         curr_contours, curr_hierarchy = cv2.findContours(
             path_img, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
@@ -262,6 +262,11 @@ def generate_raceline(lane_data, lane_name, args, map_dir):
         t_spls=t_vals,
         calc_curv=True,
     )
+    
+    # Overwrite the potentially rotated psi with the true geometric tangent
+    dx = np.gradient(raceline_interp[:, 0])
+    dy = np.gradient(raceline_interp[:, 1])
+    psi = np.arctan2(dy, dx)
 
     vx_profile = tph.calc_vel_profile.calc_vel_profile(
         ax_max_machines=ax_max_machines,
