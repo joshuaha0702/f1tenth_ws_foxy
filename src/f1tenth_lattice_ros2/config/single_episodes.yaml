@@ -1,0 +1,43 @@
+# 다중 에피소드 데이터 수집 설정 (단일 주행 모드).
+# 사용:
+#   ros2 launch f1tenth_lattice_ros2 f1tenth_lattice_gazebo.launch.py \
+#       map:=monza_track head2head:=false record:=true episodes:=src/f1tenth_lattice_ros2/config/single_episodes.yaml
+#
+# 동작:
+#   매 에피소드 시작 시 raceline_path의 한 행을 무작위로 골라 car1(ego)의 초기 자세로 사용.
+#   head2head:=false 로 실행되므로 car2 관련 설정은 무시됩니다.
+
+num_episodes: 12
+
+# 다른 맵 수집 시 이 경로를 변경하세요. (예: silverstone_track, interlagos_track 등)
+raceline_path: /root/f1tenth_ws/src/f1tenth_lattice_ros2/maps/Simple/raceline1.csv
+
+# 코드 요구사항 때문에 비워둘 수 없는 변수 (단일 주행에선 사용되지 않음)
+opponent_offset:
+  min: 40
+  max: 100
+
+# 매 에피소드 traj_v_scale을 범위 내에서 uniform 랜덤 샘플링.
+traj_v_scale:
+  car1: { min: 0.8, max: 1.0 }
+
+# 스폰 위치 및 자세 섭동: 중심라인 기준 수직 방향 lateral offset과 heading에 균등 분포 부여.
+# lateral_offset_m: 0.5 이면 좌우로 최대 50cm 무작위 배치.
+spawn_perturbation:
+  lateral_offset_m: 0.5
+  yaw_deg: 10.0
+
+# 정수 지정 시 동일 시드로 매번 같은 스폰 시퀀스 생성. (null: 매번 다름)
+random_seed: null
+
+# 에피소드 1개당 녹화 길이 (sim 초)
+sequence_duration_sec: 15.0
+
+# 텔레포트 후 차량/물리가 안정화될 시간 (sim 초)
+settle_time_sec: 3.0
+
+output:
+  base_dir: /root/f1tenth_ws/data/simple
+  staging_subdir: staging       # 녹화 중 임시 위치
+  clean_subdir: clean           # 충돌 없는 에피소드
+  collision_subdir: collision   # 충돌 발생 에피소드
