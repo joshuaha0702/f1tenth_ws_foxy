@@ -70,6 +70,11 @@ class LatticePlannerNode(Node):
 
         # Opponent state (head-to-head mode)
         self.opp_pose = np.empty((0, 3))
+        # 직전 plan() 호출 시각(ROS Time). 선두 차량 속도 추정용 dt를 측정하는 데 사용한다.
+        # (planning이 scan 트리거라 주기가 일정하지 않으므로 실측 간격을 넘겨줌)
+        # use_sim_time=True 환경에서는 wall-clock이 아니라 sim 시간(/clock)을 따라야 하므로
+        # time.perf_counter()가 아니라 self.get_clock()을 사용한다.
+        self._last_plan_time = None
 
         # 에피소드 모드: 매니저에게 STOP/START 명령을 받아 publish gate를 토글함
         # (텔레포트 직후 stale state가 다음 에피소드로 새는 것을 차단)
@@ -188,6 +193,8 @@ class LatticePlannerNode(Node):
             self.odom_received = False
             self.opp_pose = np.empty((0, 3))
             self.best_traj = None
+            # 다음 에피소드 첫 plan()에서 에피소드 사이의 긴 공백이 dt로 새지 않도록 리셋
+            self._last_plan_time = None
             self._publishing_enabled = False
             self.get_logger().info('[episode] STOP — paused publishing & cleared state')
         elif cmd == 'START':
@@ -206,9 +213,20 @@ class LatticePlannerNode(Node):
 
         try:
             t0 = time.perf_counter()
+            # 직전 plan() 호출과의 경과 시간 = 선두 차량 속도 추정용 dt.
+            # sim 시간(use_sim_time)을 따르도록 ROS 클럭으로 측정한다.
+            # 첫 호출이면 None을 넘겨 planner가 설정값 기반 기본값으로 폴백하게 한다.
+            now = self.get_clock().now()
+            if self._last_plan_time is not None:
+                dt = (now - self._last_plan_time).nanoseconds * 1e-9
+                if dt <= 0.0:
+                    dt = None
+            else:
+                dt = None
+            self._last_plan_time = now
             best_traj, best_cost, traj_cost, abs_v_cost, collision_cost = self.planner.plan(
                 self.pose_x, self.pose_y, self.pose_theta,
-                opp_poses, self.velocity
+                opp_poses, self.velocity, dt=dt
             )
             elapsed = time.perf_counter() - t0
             if elapsed > 0.03:

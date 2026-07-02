@@ -69,7 +69,10 @@ class LatticePlanner:
         self.state_t = None
         self.step_all_cost = {}
         self.all_costs = None
+        # 선두(상대) 차량 속도 추정에 쓰는 dt. 노드에서 실제 plan() 호출 간격을
+        # 넘겨주면 그 값을 쓰고, 못 받으면 이 기본값으로 폴백한다.
         self.time_interval = conf.tracker_steps * 0.01
+        self.opp_dt = self.time_interval
         self.last_s = 0.0
         self.step = 0
         self.last_timing = None
@@ -107,21 +110,62 @@ class LatticePlanner:
         self.ittc_thres = conf.ittc_thres
         self.collision_thres = 0.35
 
+        # === 선두 차량 추종(following) 모드 설정 ===
+        # 지정한 raceline 인덱스 구간(zones) 안에서 선두차가 바로 앞에 근접하면
+        # lattice 추월 대신 raceline 라인을 그대로 추종하며 차간거리(ACC)로 서행한다.
+        follow_cfg = getattr(conf, 'follow', None)
+        self.follow_enabled = False
+        self.follow_zones = []
+        self.follow_active = False  # 히스테리시스 상태(진입/해제 떨림 방지)
+        if isinstance(follow_cfg, dict):
+            zones = follow_cfg.get('zones') or []
+            self.follow_zones = [(int(z['min']), int(z['max'])) for z in zones]
+            if self.follow_zones:
+                self.follow_enabled = True
+                # car2가 car1 앞(트랙 진행방향)으로 이 거리 이내일 때 following.
+                # car1이 항상 더 빠르므로 단일 임계값으로 충분(히스테리시스 불필요).
+                self.follow_lateral_align = float(follow_cfg.get('lateral_align_m', 2.0))
+                self.follow_desired_gap = float(follow_cfg.get('desired_gap_m', 1.5))
+                self.follow_kp_gap = float(follow_cfg.get('kp_gap', 0.8))
+                self.follow_max_speed = float(follow_cfg.get('max_follow_speed', 1.5))
+                self.follow_horizon = float(follow_cfg.get('horizon_m', 3.0))
+                logger.info(
+                    f'[follow] enabled — zones={self.follow_zones}, '
+                    f'lateral_align={self.follow_lateral_align}m, '
+                    f'desired_gap={self.follow_desired_gap}m, max_speed={self.follow_max_speed}m/s'
+                )
+
     def set_cost_weights(self, cost_weights):
         if isinstance(cost_weights, int):
             n = cost_weights
             cost_weights = np.array([1 / n] * n)
         self.cost_weights = cost_weights
 
-    def plan(self, pose_x, pose_y, pose_theta, opp_poses, velocity, waypoints=None):
+    def plan(self, pose_x, pose_y, pose_theta, opp_poses, velocity, waypoints=None, dt=None):
         self.step += 1
         if waypoints is None:
             waypoints = self.waypoints
+
+        # 선두 차량 속도 추정용 dt: 노드가 측정한 plan() 호출 간격을 우선 사용하고,
+        # 유효하지 않으면(첫 호출 등) 설정값 기반 기본값으로 폴백한다.
+        self.opp_dt = dt if (dt is not None and dt > 1e-6) else self.time_interval
 
         ego_pose = np.array([pose_x, pose_y, pose_theta])
         _, _, t, nearest_i = nearest_point(ego_pose[:2], waypoints[:, 0:2])
         self.state_i = nearest_i
         self.state_t = t
+
+        # === 선두 차량 추종 모드 판정 ===
+        # 지정 구간(zone) 안에서 선두차가 바로 앞에 근접하면 lattice를 건너뛰고
+        # raceline 라인을 그대로 추종(횡 오프셋 없음=추월 불가)하며 ACC로 서행한다.
+        follow_traj = self._maybe_follow(ego_pose, opp_poses, waypoints)
+        if follow_traj is not None:
+            self.best_traj = follow_traj
+            self.best_traj_ref_v = float(follow_traj[0, 2])
+            self.prev_opp_pose = opp_poses[:, :2] if opp_poses.shape[0] > 0 else np.zeros((1, 2))
+            self.last_timing = None
+            # cost 항은 의미 없으므로 0으로 반환 (노드의 5-tuple 시그니처 유지)
+            return self.best_traj, 0.0, 0.0, 0.0, 0.0
 
         min_L = self.tracker.get_L(velocity)
         lh_grid = np.linspace(
@@ -167,6 +211,85 @@ class LatticePlanner:
         best_cost = self.all_costs[row_idx, col_idx]
         return self.best_traj, best_cost, traj_cost[row_idx, col_idx], abs_v_cost[row_idx, col_idx], collision_cost[row_idx, col_idx]
 
+    def _in_follow_zone(self, idx):
+        for lo, hi in self.follow_zones:
+            if lo <= idx <= hi:
+                return True
+        return False
+
+    def _maybe_follow(self, ego_pose, opp_poses, waypoints):
+        """following 모드 판정 후, 활성화 시 raceline 추종용 best_traj를 반환. 비활성이면 None.
+
+        조건: ego 인덱스가 zone 안 AND car2가 car1 앞(트랙 진행방향)으로
+              lateral_align_m 이내. car1이 항상 car2보다 빠르므로 gap이 단조
+              감소 -> trigger/release 히스테리시스 없이 단일 거리 임계값으로 충분.
+        """
+        if not self.follow_enabled or opp_poses.shape[0] == 0:
+            self.follow_active = False
+            return None
+
+        ego_i = self.state_i
+        opp_xy = opp_poses[0, :2]
+        _, _, _, opp_i = nearest_point(opp_xy, waypoints[:, 0:2])
+
+        # 전방 차간거리: arc-length(s) 기준, 트랙을 wrap 하여 항상 [0, s_max) 로 정규화.
+        # car2가 car1 뒤에 있으면(이미 추월) gap이 커져 임계값을 벗어나 자동 해제된다.
+        s_ego = waypoints[ego_i, 4]
+        s_opp = waypoints[opp_i, 4]
+        gap = s_opp - s_ego
+        if gap < 0.0:
+            gap += self.s_max
+
+        in_zone = self._in_follow_zone(ego_i)
+        active = in_zone and (0.0 < gap < self.follow_lateral_align)
+
+        if active and not self.follow_active:
+            logger.info(f'[follow] ENTER — ego_i={ego_i}, gap={gap:.2f}m')
+        elif not active and self.follow_active:
+            logger.info(f'[follow] EXIT — ego_i={ego_i}, gap={gap:.2f}m, in_zone={in_zone}')
+        self.follow_active = active
+
+        if not active:
+            return None
+
+        # 선두 속도 추정 (직전 plan() 호출 시점의 선두 위치와 비교)
+        v_leader = 0.0
+        if (self.prev_opp_pose.shape[0] == opp_poses.shape[0]
+                and np.sum(np.abs(self.prev_opp_pose)) > 1e-6 and self.opp_dt > 1e-6):
+            v_leader = float(np.linalg.norm(opp_xy - self.prev_opp_pose[0]) / self.opp_dt)
+
+        # ACC 속도: 목표 차간거리 유지. 선두보다 빨라지지 않고 raceline 속도/상한도 넘지 않음.
+        raceline_v_ego = float(waypoints[ego_i, 2])
+        v_cmd = v_leader + self.follow_kp_gap * (gap - self.follow_desired_gap)
+        v_cmd = max(0.0, min(v_cmd, raceline_v_ego, self.follow_max_speed))
+
+        return self._build_follow_traj(ego_i, v_cmd)
+
+    def _build_follow_traj(self, start_i, v_cmd):
+        """ego 전방 raceline 점들을 horizon_m 만큼 잘라 추종 경로(x,y,v,heading,s)를 만든다.
+
+        고정 점 개수가 아니라 고정 arc-length로 잘라, 어떤 속도/lookahead에서도
+        경로 길이 > pure pursuit lookahead 가 보장되어 코너에서도 라인 곡률을 추종한다.
+        """
+        wp = self.waypoints
+        n = wp.shape[0]
+        idxs = [int(start_i)]
+        acc = 0.0
+        i = int(start_i)
+        while acc < self.follow_horizon and len(idxs) < n:
+            nxt = (i + 1) % n
+            acc += float(np.linalg.norm(wp[nxt, :2] - wp[i, :2]))
+            idxs.append(nxt)
+            i = nxt
+        idx = np.array(idxs)
+        traj = np.zeros((len(idx), 5))
+        traj[:, 0] = wp[idx, 0]
+        traj[:, 1] = wp[idx, 1]
+        traj[:, 2] = v_cmd
+        traj[:, 3] = wp[idx, 3]
+        traj[:, 4] = wp[idx, 4]
+        return traj
+
     def _eval(self, all_traj, all_traj_clothoid, opp_poses, ego_pose):
         cost_weights = self.cost_weights
         n, k = self.traj_num, self.v_lattice_num
@@ -201,7 +324,7 @@ class LatticePlanner:
 
         collision_cost = cost_weights[-1] * get_obstacle_collision_with_v(
             all_traj, all_traj_clothoid, traj_v_lattice,
-            opp_poses, self.prev_opp_pose, self.time_interval
+            opp_poses, self.prev_opp_pose, self.opp_dt
         )
 
         cost = np.repeat(cost, k).reshape(n, k)
