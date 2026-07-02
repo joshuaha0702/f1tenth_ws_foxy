@@ -294,8 +294,8 @@ output:
 ros2 launch f1tenth_lattice_ros2 f1tenth_lattice_gazebo.launch.py \
   head2head:=true \
   record:=true \
-  episodes:=src/f1tenth_lattice_ros2/config/episodes.yaml \
-  headless:=true
+  headless:=true \
+  episodes:=src/f1tenth_lattice_ros2/config/episodes.yaml
 ```
 
 | 파라미터 | 값 | 설명 |
@@ -389,6 +389,36 @@ ros2 run f1tenth_fgm_ros2 random_reset.py --ros-args -p robot_name:=car2
 *   **`carWidth_tolerance`:** 차량 폭에 대한 안전 마진 값입니다. 코너 안쪽 벽을 긁는다면 이 값을 높이세요. (현재 추천: **0.30**)
 *   **`max_speed`:** 최대 주행 속도 (안정적인 테스트를 위해 1.0 이하 추천)
 *   **Chassis Collision Detection:** `racecar.gazebo`에 범퍼 센서가 추가되어 차량 섀시의 충돌이 물리적으로 감지됩니다. 충돌 발생 시 시뮬레이션 상에서 즉각적인 피드백을 확인할 수 있습니다.
+
+## 메모
+[로컬에서 Xlaunch 실행 -> SSH 통한 서버 접속 -> 서버 내에서 도커 빌드 -> 도커 내에서 GUI 사용하기] 과정을 위한 도커 실행 파라미터
+```bash
+XAUTH=/tmp/.docker.xauth
+rm -f "$XAUTH"
+touch "$XAUTH"
+xauth nlist "$DISPLAY" | sed -e 's/^..../ffff/' | xauth -f "$XAUTH" nmerge -
+chmod 644 "$XAUTH"
+
+docker run -dit \
+  --name f1tenth_foxy \
+  --network host \
+  --ipc host \
+  --privileged \
+  --gpus all \
+  -e DISPLAY="$DISPLAY" \
+  -e XAUTHORITY=/tmp/.docker.xauth \
+  -e QT_X11_NO_MITSHM=1 \
+  -e NVIDIA_VISIBLE_DEVICES=all \
+  -e NVIDIA_DRIVER_CAPABILITIES=all \
+  -v /tmp/.docker.xauth:/tmp/.docker.xauth:ro \
+  -v /dev/dri:/dev/dri \
+  -v "$PWD/src:/root/f1tenth_ws/src" \
+  -v /dev/input:/dev/input \
+  -v "$PWD/bags:/root/f1tenth_ws/bags" \
+  -v "$PWD/data:/root/f1tenth_ws/data" \
+  f1tenth_ws_foxy-ros2_humble \
+  bash
+```
 
 ## 📄 License
 

@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     tmux \
     wget \
     libeigen3-dev \
+    x11-apps \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. Install SLAM and Navigation2 packages
