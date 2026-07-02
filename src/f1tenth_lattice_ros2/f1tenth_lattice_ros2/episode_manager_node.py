@@ -292,6 +292,29 @@ class EpisodeManagerNode(Node):
                     f'random_seed must be an integer or null, got {seed!r}'
                 )
 
+        # ---- spawn_idx_ranges (옵션) ----
+        ranges = cfg.get('spawn_idx_ranges')
+        if ranges is not None:
+            if not isinstance(ranges, list) or len(ranges) == 0:
+                self._yaml_die(
+                    'spawn_idx_ranges must be a non-empty list of {min, max} mappings'
+                )
+            for i, r in enumerate(ranges):
+                if not isinstance(r, dict) or 'min' not in r or 'max' not in r:
+                    self._yaml_die(
+                        f'spawn_idx_ranges[{i}] must have min and max keys'
+                    )
+                try:
+                    rmin = int(r['min'])
+                    rmax = int(r['max'])
+                except (TypeError, ValueError):
+                    self._yaml_die(f'spawn_idx_ranges[{i}].min/max must be integers')
+                if rmin < 0 or rmax < rmin:
+                    self._yaml_die(
+                        f'spawn_idx_ranges[{i}]: require 0 <= min <= max, '
+                        f'got min={rmin}, max={rmax}'
+                    )
+
         # ---- spawn_perturbation (옵션) ----
         perturb = cfg.get('spawn_perturbation')
         if perturb is not None:
@@ -374,13 +397,44 @@ class EpisodeManagerNode(Node):
                 f'raceline too short ({n_rows} rows) for opponent_offset.max={offset_max}'
             )
 
+        # spawn_idx_ranges: 지정된 구간들의 인덱스를 합쳐 후보 풀 생성.
+        # 미지정 시 전체 raceline 사용.
+        spawn_ranges = self.cfg.get('spawn_idx_ranges')
+        if spawn_ranges:
+            ego_pool = []
+            for r in spawn_ranges:
+                rmin = int(r['min'])
+                rmax = int(r['max'])
+                if rmax >= n_rows:
+                    self._yaml_die(
+                        f'spawn_idx_ranges max={rmax} >= raceline length {n_rows}'
+                    )
+                ego_pool.extend(range(rmin, rmax + 1))
+            # 중복 제거 (구간이 겹칠 경우 해당 인덱스가 더 자주 샘플될 수 있으므로)
+            ego_pool = sorted(set(ego_pool))
+            if not ego_pool:
+                self._yaml_die('spawn_idx_ranges resolved to an empty candidate pool')
+        else:
+            ego_pool = list(range(n_rows))
+
         perturb_cfg = self.cfg.get('spawn_perturbation', {}) or {}
         lateral_half = float(perturb_cfg.get('lateral_offset_m', 0.0))
         yaw_half_deg = float(perturb_cfg.get('yaw_deg', 0.0))
 
         rng = random.Random(seed) if seed is not None else random.Random()
+
+        # spawn_idx_ranges 요약 문자열 (로그용)
+        if spawn_ranges:
+            ranges_str = ', '.join(
+                f'[{int(r["min"])},{int(r["max"])}]' for r in spawn_ranges
+            )
+            pool_desc = f'spawn_idx_ranges={ranges_str} → {len(ego_pool)} candidates'
+        else:
+            pool_desc = f'all {n_rows} rows'
+
         self.get_logger().info(
             f'Generating {num_episodes} episodes from raceline ({n_rows} rows), '
+            f'ego pool: {pool_desc}, '
             f'opponent offset ∈ [{offset_min}, {offset_max}], seed={seed}, '
             f'perturbation: lateral=uniform(±{lateral_half}m), yaw=uniform(±{yaw_half_deg}deg)'
         )
@@ -406,7 +460,7 @@ class EpisodeManagerNode(Node):
 
         episodes = []
         for _ in range(num_episodes):
-            ego_idx = rng.randrange(n_rows)
+            ego_idx = rng.choice(ego_pool)
             offset = rng.randint(offset_min, offset_max)
             opp_idx = (ego_idx + offset) % n_rows
             car1_pose, lat1, yaw1 = row_to_pose(raceline[ego_idx])
