@@ -418,6 +418,52 @@ for bag in data/0630_single/clean/*/; do
 done
 ```
 
+## 6. 모델 학습 (train.py)
+
+수집한 CSV 데이터로 End2Race 모델(GRU 기반)을 학습하는 스크립트입니다.  
+LiDAR 360빔 + 직전 속도를 입력으로 받아 조향(`steer`)·목표 속도(`desired_speed`)를 출력하도록 지도학습합니다.
+
+```bash
+# 기본 학습 (origin 모드)
+python3 train.py --data_path data/0630_single/csv --mode origin
+
+# 기존 체크포인트에서 이어서 학습 (fine-tuning)
+python3 train.py --data_path data/0630_single/csv \
+  --checkpoint_path src/f1tenth_end2race_ros2/models/origin_20260629.pth
+```
+
+> **Note:** 모델 정의(`End2Race`, `End2RaceWithDelay`)를 `model.py`에서 import하므로,
+> `src/f1tenth_end2race_ros2/f1tenth_end2race_ros2/`를 `PYTHONPATH`에 추가하고 실행합니다.
+> ```bash
+> PYTHONPATH=src/f1tenth_end2race_ros2/f1tenth_end2race_ros2 python3 train.py ...
+> ```
+
+### 학습 방식
+
+*   **입력 데이터:** `lidar_0`~`lidar_359`, `steer`, `desired_speed` 컬럼을 가진 에피소드별 CSV (`lidar_delay` 모드는 `lidar_delay` 컬럼 추가 필요). 필수 컬럼이 없거나 길이가 부족한 CSV는 자동으로 건너뜁니다.
+*   **시퀀스 구성:** 각 에피소드를 `sequence_length` 길이의 슬라이딩 윈도우(`stride` 간격)로 잘라 시퀀스 단위로 학습합니다. 속도 입력은 한 스텝 이전 값(`speed_prev`)을 사용합니다.
+*   **손실 함수:** `MSE(steer) + 0.05 × MSE(speed)` — 조향 학습에 가중치를 둔 구성입니다.
+*   **저장:** epoch 평균 손실이 최저를 갱신할 때마다 `model_path`에 저장됩니다. `--model_path` 미지정 시 `{mode}_{YYYYMMDD}.pth`로 자동 생성되며, 같은 이름의 파일이 이미 있으면 해당 가중치를 불러와 이어서 학습합니다.
+*   **학습 안정화:** gradient clipping(max_norm=1.0) + `ReduceLROnPlateau` 스케줄러(patience=10, factor=0.5)를 사용합니다.
+
+### 주요 인자
+
+| 인자 | 기본값 | 설명 |
+|---|---|---|
+| `--data_path` | `Dataset_Austin/success` | 에피소드 CSV들이 있는 디렉토리 |
+| `--mode` | `origin` | `origin`: 기본 / `lidar_delay`: LiDAR 지연 입력 포함 학습 |
+| `--model_path` | 자동 생성 | 모델 저장 경로 (`{mode}_{날짜}.pth`) |
+| `--checkpoint_path` | `None` | 학습 시작 전 불러올 가중치 (fine-tuning) |
+| `--sequence_length` | `100` | 시퀀스당 타임스텝 수 |
+| `--stride` | `50` | 슬라이딩 윈도우 간격 |
+| `--hidden_scale` | `4` | GRU 히든 사이즈 스케일 (**추론 시 `end2race_config.yaml`의 값과 일치 필수**) |
+| `--mask_prob` | `0.1` | 학습 중 입력 마스킹 확률 (regularization) |
+| `--batch_size` | `16` | 배치 크기 |
+| `--learning_rate` | `0.001` | 초기 학습률 |
+| `--num_epochs` | `500` | 학습 epoch 수 |
+
+학습이 끝나면 생성된 `.pth`를 `src/f1tenth_end2race_ros2/models/`로 옮기고, End2Race 런처의 `models:=` 인자로 지정해 주행을 확인합니다.
+
 ---
 
 ## 🛠 추가적인 기능 구현
