@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -10,12 +11,33 @@ from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
 
+def _argv_value(key, default=None):
+    """`key:=value` 형태 launch 인자를 argv에서 직접 파싱.
+
+    LaunchConfiguration이 아직 해석되지 않는 launch-description 생성 시점에
+    파일 경로 등을 미리 읽어야 할 때 사용. 값이 있으면 절대경로로 정규화.
+    """
+    prefix = key + ':='
+    for arg in sys.argv:
+        if arg.startswith(prefix):
+            value = arg.split(':=', 1)[1]
+            if value:
+                return os.path.abspath(os.path.expanduser(value))
+            return default
+    return default
+
+
 def generate_launch_description():
     lattice_pkg = get_package_share_directory('f1tenth_lattice_ros2')
     description_pkg = get_package_share_directory('racecar_description')
 
+    # config:= 인자로 사용자 지정 lattice_config.yaml 경로를 받을 수 있음.
+    # LaunchConfiguration은 이 시점에 아직 해석되지 않으므로 argv에서 직접 파싱하여
+    # 스폰 좌표 기본값도 지정한 config 기준으로 읽는다.
+    _default_config_path = os.path.join(lattice_pkg, 'config', 'lattice_config.yaml')
+    _config_path = _argv_value('config', _default_config_path)
+
     # Read spawn defaults from config at launch-description-generation time
-    _config_path = os.path.join(lattice_pkg, 'config', 'lattice_config.yaml')
     with open(_config_path) as _f:
         _cfg = yaml.safe_load(_f)
     _s1 = _cfg.get('car1', {}).get('spawn', {})
@@ -96,9 +118,36 @@ def generate_launch_description():
 
     # Paths to lattice planner resources
     # raceline1.csv = center lane (3 lanes: inner=0, center=1, outer=2)
-    config_path = os.path.join(lattice_pkg, 'config', 'lattice_config.yaml')
+    config_arg = DeclareLaunchArgument(
+        'config',
+        default_value=_default_config_path,
+        description='lattice_config.yaml 경로 (스폰 좌표 기본값도 이 파일에서 읽음)'
+    )
+    config_path = LaunchConfiguration('config')
     map_path = os.path.join(lattice_pkg, 'maps', 'Simple_map')   # no extension
-    raceline_path = os.path.join(lattice_pkg, 'maps', 'raceline1.csv')
+
+    # 플래너가 추종할 raceline 경로 결정.
+    # 우선순위: raceline:= 명시 > episodes.yaml의 raceline_path > 기본값(raceline1.csv).
+    # 이렇게 하면 episode_manager가 스폰 자세 생성에 쓰는 raceline과
+    # 플래너가 실제 추종하는 raceline이 자동으로 일치한다.
+    _default_raceline_path = os.path.join(lattice_pkg, 'maps', 'raceline1.csv')
+    _resolved_raceline = _default_raceline_path
+    _episodes_path = _argv_value('episodes')
+    if _episodes_path and os.path.isfile(_episodes_path):
+        with open(_episodes_path) as _ef:
+            _ecfg = yaml.safe_load(_ef) or {}
+        _ep_rl = _ecfg.get('raceline_path')
+        if _ep_rl:
+            _resolved_raceline = os.path.abspath(os.path.expanduser(_ep_rl))
+    # raceline:= 가 명시되면 episodes.yaml 값보다 우선
+    _resolved_raceline = _argv_value('raceline', _resolved_raceline)
+
+    raceline_arg = DeclareLaunchArgument(
+        'raceline',
+        default_value=_resolved_raceline,
+        description='플래너가 추종할 raceline CSV 경로. 미지정 시 episodes.yaml의 raceline_path, 그것도 없으면 raceline1.csv'
+    )
+    raceline_path = LaunchConfiguration('raceline')
 
     # Lattice planner node — car1
     lattice_node = Node(
@@ -298,6 +347,8 @@ def generate_launch_description():
         namespace_arg,
         head2head_arg,
         headless_arg,
+        config_arg,
+        raceline_arg,
         x_arg,
         y_arg,
         yaw_arg,
