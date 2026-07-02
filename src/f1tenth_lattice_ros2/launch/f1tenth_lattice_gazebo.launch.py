@@ -57,6 +57,14 @@ def generate_launch_description():
     )
     namespace = LaunchConfiguration('namespace')
 
+    # Map name argument
+    map_arg = DeclareLaunchArgument(
+        'map',
+        default_value='Simple',
+        description='Name of the map to load'
+    )
+    map_name = LaunchConfiguration('map')
+
     # Head-to-head mode argument
     head2head_arg = DeclareLaunchArgument(
         'head2head',
@@ -99,6 +107,7 @@ def generate_launch_description():
             'namespace': 'car1',
             'x': spawn_x, 'y': spawn_y, 'yaw': spawn_yaw,
             'gui': gui_value,
+            'map': map_name,
         }.items()
     )
 
@@ -113,6 +122,7 @@ def generate_launch_description():
             'launch_gazebo': 'false',
             'color': 'orange',
             'visualize_lidar': 'false',
+            'map': map_name,
         }.items()
     )
 
@@ -124,14 +134,15 @@ def generate_launch_description():
         description='lattice_config.yaml 경로 (스폰 좌표 기본값도 이 파일에서 읽음)'
     )
     config_path = LaunchConfiguration('config')
-    map_path = os.path.join(lattice_pkg, 'maps', 'Simple_map')   # no extension
+    # Use PythonExpression to dynamically build the path since we are grouping them in folders: maps/<map_name>/<map_name>_map
+    map_path = PythonExpression(["'", lattice_pkg, "/maps/' + '", map_name, "' + '/' + '", map_name, "_map'"])
 
     # 플래너가 추종할 raceline 경로 결정.
-    # 우선순위: raceline:= 명시 > episodes.yaml의 raceline_path > 기본값(raceline1.csv).
+    # 우선순위: raceline:= 명시 > episodes.yaml의 raceline_path > 기본값(maps/<map>/raceline1.csv).
     # 이렇게 하면 episode_manager가 스폰 자세 생성에 쓰는 raceline과
     # 플래너가 실제 추종하는 raceline이 자동으로 일치한다.
-    _default_raceline_path = os.path.join(lattice_pkg, 'maps', 'raceline1.csv')
-    _resolved_raceline = _default_raceline_path
+    _default_raceline = PythonExpression(["'", lattice_pkg, "/maps/' + '", map_name, "' + '/raceline1.csv'"])
+    _resolved_raceline = None
     _episodes_path = _argv_value('episodes')
     if _episodes_path and os.path.isfile(_episodes_path):
         with open(_episodes_path) as _ef:
@@ -144,8 +155,8 @@ def generate_launch_description():
 
     raceline_arg = DeclareLaunchArgument(
         'raceline',
-        default_value=_resolved_raceline,
-        description='플래너가 추종할 raceline CSV 경로. 미지정 시 episodes.yaml의 raceline_path, 그것도 없으면 raceline1.csv'
+        default_value=_resolved_raceline if _resolved_raceline else _default_raceline,
+        description='플래너가 추종할 raceline CSV 경로. 미지정 시 episodes.yaml의 raceline_path, 그것도 없으면 maps/<map>/raceline1.csv'
     )
     raceline_path = LaunchConfiguration('raceline')
 
@@ -345,6 +356,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         namespace_arg,
+        map_arg,
         head2head_arg,
         headless_arg,
         config_arg,

@@ -98,8 +98,10 @@ def load_lane(csv_path):
 def main():
     args = parse_arguments()
 
-    map_yaml = args.map_yaml or os.path.join(args.maps_dir, f'{args.map_name}_map.yaml')
-    raceline_csv = args.raceline_csv or os.path.join(args.maps_dir, f'{args.raceline}.csv')
+    # Maps are grouped per map: maps/<map_name>/<map_name>_map.yaml, maps/<map_name>/<raceline>.csv
+    map_dir = os.path.join(args.maps_dir, args.map_name)
+    map_yaml = args.map_yaml or os.path.join(map_dir, f'{args.map_name}_map.yaml')
+    raceline_csv = args.raceline_csv or os.path.join(map_dir, f'{args.raceline}.csv')
 
     if not os.path.exists(map_yaml):
         raise FileNotFoundError(f'Map yaml not found: {map_yaml}')
@@ -118,7 +120,7 @@ def main():
     # Optional lane overlays
     if args.lanes:
         for stem in args.lanes:
-            lane_path = os.path.join(args.maps_dir, f'{stem}.csv')
+            lane_path = os.path.join(map_dir, f'{stem}.csv')
             if os.path.exists(lane_path):
                 lane = load_lane(lane_path)
                 ax.plot(lane[:, 0], lane[:, 1], '--', lw=0.8, alpha=0.6, label=stem)

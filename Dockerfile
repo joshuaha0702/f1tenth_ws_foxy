@@ -4,6 +4,7 @@ FROM osrf/ros:foxy-desktop
 RUN apt-get update && apt-get install -y \
     python3-pip \
     python3-colcon-common-extensions \
+    python3-tk \
     git \
     vim \
     tmux \
@@ -50,7 +51,10 @@ RUN python3 -m pip install --no-cache-dir \
     "scipy==1.10.1" \
     "pandas==2.0.3" \
     pyclothoids \
-    rosbags 
+    rosbags \
+    opencv-contrib-python \
+    matplotlib \
+    trajectory_planning_helpers
 
 # 5. Install PyTorch for CUDA 11.8 <- Check your CUDA version
 RUN python3 -m pip install --no-cache-dir \

@@ -1,5 +1,7 @@
 services:
-  ros2_humble:
+  # 기본 실행 서비스 (GPU 전용)
+  # 실행: docker compose up -d
+  ros2_gpu:
     build: .
     container_name: f1tenth_foxy
     network_mode: host
@@ -17,6 +19,28 @@ services:
       - QT_X11_NO_MITSHM=1
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /dev/dri:/dev/dri
+      - ./src:/root/f1tenth_ws/src
+      - /dev/input:/dev/input
+      - ./bags:/root/f1tenth_ws/bags
+      - ./data:/root/f1tenth_ws/data
+    stdin_open: true
+    tty: true
+
+  # CPU 전용 서비스 (GPU가 없는 PC용)
+  # 실행: docker compose --profile cpu up -d
+  ros2_cpu:
+    profiles: ["cpu"]
+    build: .
+    container_name: f1tenth_foxy_cpu
+    network_mode: host
+    ipc: host
+    privileged: true
+    environment:
+      - DISPLAY=$DISPLAY
+      - QT_X11_NO_MITSHM=1
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - /dev/dri:/dev/dri

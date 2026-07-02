@@ -8,7 +8,7 @@
 #   car2(선두차)는 ego_idx + random_offset 행에서 추출 (raceline 끝을 넘으면 wrap-around).
 
 num_episodes: 500
-raceline_path: /root/f1tenth_ws/src/f1tenth_lattice_ros2/maps/raceline1.csv
+raceline_path: /root/f1tenth_ws/src/f1tenth_lattice_ros2/maps/Simple/raceline1.csv
 
 # car1(ego) 스폰 위치를 raceline 행 인덱스 기준으로 제한할 구간 목록 (선택).
 # 여러 구간을 지정하면 전체 후보 풀에서 균등 샘플링 (구간 길이에 비례).

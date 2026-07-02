@@ -18,19 +18,23 @@ xhost +local:docker
 
 ### 2. 컨테이너 실행
 
-설치된 Docker 버전에 따라 명령어가 다를 수 있습니다. 아래 중 작동하는 명령어를 사용하세요.
+본 패키지의 기본 도커 설정은 **NVIDIA GPU 사용**을 권장하고 있습니다.
+GPU 유무에 따라 아래 명령어 중 본인 환경에 맞는 것을 선택해 실행하세요.
 
+**🏎️ GPU가 있는 PC (기본 설정):**
 ```bash
-# Docker Compose V2 (최신):
 docker compose build
 docker compose up -d
-
-# Docker Compose V1 (구버전):
-docker-compose build
-docker-compose up -d
-
-# Tip: 만약 명령어가 둘 다 안 된다면 docker --version으로 도커 설치 여부를 먼저 확인하세요.
 ```
+
+**💻 GPU가 없는 PC (CPU 전용 모드):**
+GPU를 찾을 수 없다는 에러(`could not select device driver "nvidia"`)가 발생하면 `cpu` 프로필을 사용하여 실행하세요.
+```bash
+docker compose build
+docker compose --profile cpu up -d ros2_cpu
+```
+
+> **Tip:** 구버전 Docker를 사용하신다면 `docker compose` 대신 `docker-compose`를 입력하시면 됩니다. 컨테이너를 종료하실 때는 `docker compose down`을 사용하세요.
 
 ### 3. 컨테이너 접속
 
@@ -211,8 +215,9 @@ ros2 launch f1tenth_lattice_ros2 f1tenth_lattice_gazebo.launch.py
 | `namespace` | `car1` | 로봇 네임스페이스 |
 | `x` / `y` | `6.4` / `16.0` | 스폰 위치 (m) |
 | `yaw_deg` | `-90.0` | 스폰 초기 방향 (도) |
+| `map` | `Simple` | 로드할 맵 이름 (`maps/<맵이름>/` 폴더 기준) |
 | `config` | `config/lattice_config.yaml` | 플래너 설정 파일 경로. 지정 시 스폰 좌표 기본값도 이 파일에서 읽음 |
-| `raceline` | `maps/raceline1.csv` | 플래너가 추종할 raceline CSV. `episodes:=` 지정 시 episodes.yaml의 `raceline_path`가 자동 적용됨 |
+| `raceline` | `maps/<맵이름>/raceline1.csv` | 플래너가 추종할 raceline CSV. `episodes:=` 지정 시 episodes.yaml의 `raceline_path`가 자동 적용됨 |
 
 ### 주행 시작
 
@@ -220,21 +225,21 @@ ros2 launch f1tenth_lattice_ros2 f1tenth_lattice_gazebo.launch.py
 
 ### 레이스라인 변경
 
-`maps/` 폴더에 3개의 레인(`raceline0.csv` ~ `raceline2.csv`)이 포함되어 있습니다.  
+각 맵 폴더(`maps/<맵이름>/`)에 3개의 레인(`raceline0.csv` ~ `raceline2.csv`)이 포함되어 있습니다.  
 런처 실행 시 `raceline:=` 인자로 지정합니다 (파일 수정 불필요).
 
 ```bash
 ros2 launch f1tenth_lattice_ros2 f1tenth_lattice_gazebo.launch.py \
-  raceline:=src/f1tenth_lattice_ros2/maps/raceline0.csv
+  raceline:=src/f1tenth_lattice_ros2/maps/Simple/raceline0.csv
 ```
 
 ```
-inner  : maps/raceline0.csv
-center : maps/raceline1.csv  ← 기본값
-outer  : maps/raceline2.csv
+inner  : maps/<맵이름>/raceline0.csv
+center : maps/<맵이름>/raceline1.csv  ← 기본값
+outer  : maps/<맵이름>/raceline2.csv
 ```
 
-> 우선순위: `raceline:=` 명시 > `episodes:=`로 지정한 episodes.yaml의 `raceline_path` > 기본값(`raceline1.csv`).  
+> 우선순위: `raceline:=` 명시 > `episodes:=`로 지정한 episodes.yaml의 `raceline_path` > 기본값(`maps/<맵이름>/raceline1.csv`).  
 > 에피소드 수집 시 episode_manager의 스폰 기준 raceline과 플래너 추종 raceline이 자동으로 일치합니다.
 
 ### 주요 파라미터 수정
@@ -333,7 +338,7 @@ python3 src/f1tenth_lattice_ros2/tools/inspect_raceline.py --map_name Simple --r
 | 항목 | 기본값 | 설명 |
 |---|---|---|
 | `num_episodes` | `500` | 수집할 에피소드 수 |
-| `raceline_path` | `maps/raceline1.csv` | 스폰 기준 레이스라인 (플래너 추종 raceline에도 자동 적용) |
+| `raceline_path` | `maps/Simple/raceline1.csv` | 스폰 기준 레이스라인 (플래너 추종 raceline에도 자동 적용) |
 | `spawn_idx_ranges` | (미지정) | car1 스폰 위치를 raceline 행 인덱스 구간으로 제한 (아래 참고) |
 | `opponent_offset.min/max` | `5` / `50` | car2가 car1 앞에 놓이는 행 인덱스 범위 |
 | `traj_v_scale.car1/car2` | `1.0~1.0` / `0.3~0.7` | 에피소드별 속도 스케일 범위 (균등 랜덤) |

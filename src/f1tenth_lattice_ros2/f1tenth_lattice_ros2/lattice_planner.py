@@ -80,18 +80,20 @@ class LatticePlanner:
         self.tracker = PurePursuitPlanner(conf, wpt_path, wb=wb)
         self.conf = conf
 
-        # load map image
-        map_img_path = map_path + '.png'
+        with open(map_path + '.yaml', 'r') as f:
+            meta = yaml.safe_load(f)
+            
+        # load map image using the filename specified in yaml
+        image_filename = meta['image']
+        import os
+        map_img_path = os.path.join(os.path.dirname(map_path), image_filename)
         img = np.array(
-            Image.open(map_img_path).transpose(Image.FLIP_TOP_BOTTOM)
+            Image.open(map_img_path).convert('L').transpose(Image.FLIP_TOP_BOTTOM)
         ).astype(np.float64)
         img[img <= 128.] = 0.
         img[img > 128.] = 255.
         self.map_height = img.shape[0]
         self.map_width = img.shape[1]
-
-        with open(map_path + '.yaml', 'r') as f:
-            meta = yaml.safe_load(f)
         self.map_resolution = meta['resolution']
         self.origin = meta['origin']
         self.orig_x = self.origin[0]
