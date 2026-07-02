@@ -211,6 +211,8 @@ ros2 launch f1tenth_lattice_ros2 f1tenth_lattice_gazebo.launch.py
 | `namespace` | `car1` | 로봇 네임스페이스 |
 | `x` / `y` | `6.4` / `16.0` | 스폰 위치 (m) |
 | `yaw_deg` | `-90.0` | 스폰 초기 방향 (도) |
+| `config` | `config/lattice_config.yaml` | 플래너 설정 파일 경로. 지정 시 스폰 좌표 기본값도 이 파일에서 읽음 |
+| `raceline` | `maps/raceline1.csv` | 플래너가 추종할 raceline CSV. `episodes:=` 지정 시 episodes.yaml의 `raceline_path`가 자동 적용됨 |
 
 ### 주행 시작
 
@@ -219,13 +221,21 @@ ros2 launch f1tenth_lattice_ros2 f1tenth_lattice_gazebo.launch.py
 ### 레이스라인 변경
 
 `maps/` 폴더에 3개의 레인(`raceline0.csv` ~ `raceline2.csv`)이 포함되어 있습니다.  
-런처 파일(`f1tenth_lattice_gazebo.launch.py`) 내 `raceline_path` 값을 수정하여 변경합니다.
+런처 실행 시 `raceline:=` 인자로 지정합니다 (파일 수정 불필요).
+
+```bash
+ros2 launch f1tenth_lattice_ros2 f1tenth_lattice_gazebo.launch.py \
+  raceline:=src/f1tenth_lattice_ros2/maps/raceline0.csv
+```
 
 ```
 inner  : maps/raceline0.csv
 center : maps/raceline1.csv  ← 기본값
 outer  : maps/raceline2.csv
 ```
+
+> 우선순위: `raceline:=` 명시 > `episodes:=`로 지정한 episodes.yaml의 `raceline_path` > 기본값(`raceline1.csv`).  
+> 에피소드 수집 시 episode_manager의 스폰 기준 raceline과 플래너 추종 raceline이 자동으로 일치합니다.
 
 ### 주요 파라미터 수정
 
@@ -237,6 +247,62 @@ outer  : maps/raceline2.csv
 | `cost_weights` | 비용 함수 가중치 `[raceline추종, 속도보상, 곡률페널티, 충돌]` |
 | `traj_v_span_min/max` | 후보 궤적 속도 범위 스케일 |
 | `minL` / `maxL` | Pure Pursuit lookahead 거리 범위 |
+
+### 선두 차량 추종(Follow) 모드 — 구간별 P 제어
+
+head-to-head 모드에서 **지정한 raceline 인덱스 구간(zone) 안에서만** lattice 추월을 멈추고, 선두차(car2)를 따라가며 차간거리를 P 제어(ACC)로 유지하는 기능입니다. 추월이 위험한 코너 구간 등에서 안전하게 대기하다가, 구간을 벗어나거나 선두차와 멀어지면 자동으로 기존 lattice 추월 모드로 복귀합니다.
+
+**동작 조건** — 아래 두 조건을 모두 만족하는 동안 following이 활성화됩니다.
+
+1. car1(ego)의 현재 raceline 인덱스가 `zones` 중 한 구간 안에 있음
+2. car2가 car1 **앞**(트랙 진행 방향, arc-length 기준)으로 `lateral_align_m` 이내에 있음
+
+활성화되면 lattice 후보 생성을 건너뛰고 raceline을 횡 오프셋 없이 그대로 추종(=추월 불가)하며, 속도는 아래 P 제어식으로 결정됩니다.
+
+```
+v_cmd = v_leader + kp_gap × (gap − desired_gap_m)
+v_cmd = clip(v_cmd, 0, min(raceline 속도, max_follow_speed))
+```
+
+*   `gap`: raceline arc-length(s) 기준 전방 차간거리 (트랙 wrap-around 처리됨)
+*   `v_leader`: 직전 plan() 호출 대비 선두차 이동량으로 추정한 속도 (sim 시간 기준 실측 dt 사용)
+*   차간거리가 목표보다 크면 가속, 작으면 감속하여 `desired_gap_m`으로 수렴
+
+**설정** — `config/lattice_config.yaml`의 `car1:` 아래 `follow:` 블록으로 제어합니다. `follow` 키를 제거하거나 `zones`를 비우면 완전히 비활성(기존 동작 유지)됩니다.
+
+```yaml
+car1:
+  # ... 기존 파라미터 ...
+  follow:
+    zones:                        # following 활성 구간 (raceline 행 인덱스 기준)
+      - { min: 90,  max: 140 }
+      - { min: 210, max: 235 }
+      - { min: 0,   max: 15 }
+    lateral_align_m: 3.0          # car2가 이 거리(m) 이내로 앞에 있으면 following 진입
+    desired_gap_m: 1.5            # P 제어 목표 차간거리 (m)
+    kp_gap: 0.8                   # 차간거리 오차 → 속도 보정 P 게인
+    max_follow_speed: 3.0         # following 중 속도 상한 (m/s)
+    horizon_m: 3.0                # 추종 경로로 잘라 쓸 전방 raceline 길이 (m)
+```
+
+| 파라미터 | 설명 |
+|---|---|
+| `zones` | following을 허용할 raceline 행 인덱스 구간 목록. 인덱스 확인은 `tools/inspect_raceline.py` 활용 |
+| `lateral_align_m` | 진입/해제 판정 거리. lattice 회피 반응거리(~3m)보다 크게 잡아야 follow가 추월을 선점함 |
+| `desired_gap_m` | ACC 목표 차간거리. 차량 길이(0.58m)를 고려하고 `lateral_align_m`보다 작게 설정 |
+| `kp_gap` | P 게인. 클수록 목표 거리 수렴이 빠르지만 속도 변화가 급격해짐 |
+| `max_follow_speed` | following 중 서행 상한. raceline 속도와 비교해 더 작은 값이 적용됨 |
+| `horizon_m` | 고정 arc-length로 경로를 잘라 Pure Pursuit lookahead보다 항상 길게 유지 (코너 곡률 추종 보장) |
+
+> car1이 car2보다 항상 빠른 세팅에서는 gap이 단조 감소하므로 별도 히스테리시스 없이 단일 임계값으로 진입/해제가 판정됩니다. car2가 뒤로 처지면(추월 완료) gap이 wrap되어 커지면서 자동 해제됩니다. 진입/해제 시 `[follow] ENTER / EXIT` 로그가 출력됩니다.
+
+### Raceline 인덱스 확인 도구
+
+`zones`, `spawn_idx_ranges` 등 raceline 행 인덱스 기반 설정을 잡을 때 사용하는 인터랙티브 뷰어입니다. 맵 위에 raceline을 겹쳐 그리고, 마우스를 올리면 가장 가까운 점의 **행 인덱스와 (x, y) 좌표**를 표시합니다.
+
+```bash
+python3 src/f1tenth_lattice_ros2/tools/inspect_raceline.py --map_name Simple --raceline raceline1
+```
 
 ---
 
@@ -266,25 +332,42 @@ outer  : maps/raceline2.csv
 
 | 항목 | 기본값 | 설명 |
 |---|---|---|
-| `num_episodes` | `50` | 수집할 에피소드 수 |
-| `raceline_path` | `maps/raceline1.csv` | 스폰 기준 레이스라인 |
-| `opponent_offset.min/max` | `40` / `100` | car2가 car1 앞에 놓이는 행 인덱스 범위 |
-| `traj_v_scale.car1/car2` | `0.9~1.0` / `0.3~0.7` | 에피소드별 속도 스케일 범위 (균등 랜덤) |
+| `num_episodes` | `500` | 수집할 에피소드 수 |
+| `raceline_path` | `maps/raceline1.csv` | 스폰 기준 레이스라인 (플래너 추종 raceline에도 자동 적용) |
+| `spawn_idx_ranges` | (미지정) | car1 스폰 위치를 raceline 행 인덱스 구간으로 제한 (아래 참고) |
+| `opponent_offset.min/max` | `5` / `50` | car2가 car1 앞에 놓이는 행 인덱스 범위 |
+| `traj_v_scale.car1/car2` | `1.0~1.0` / `0.3~0.7` | 에피소드별 속도 스케일 범위 (균등 랜덤) |
+| `spawn_perturbation` | `±1.2m` / `±10°` | 스폰 시 중심라인 수직 오프셋·heading 섭동 (균등 분포) |
 | `random_seed` | `42` | 재현성 시드 (`null`이면 매번 다름) |
-| `sequence_duration_sec` | `15.0` | 에피소드 1개당 녹화 길이 (sim 초) |
+| `sequence_duration_sec` | `8.0` | 에피소드 1개당 녹화 길이 (sim 초) |
 | `settle_time_sec` | `3.0` | 텔레포트 후 안정화 대기 시간 (sim 초) |
-| `output.base_dir` | `/root/f1tenth_ws/data/0529` | 데이터 저장 루트 경로 |
+| `output.base_dir` | `/root/f1tenth_ws/data/0630_single` | 데이터 저장 루트 경로 |
 
 ```yaml
 # episodes.yaml 핵심 항목 예시
-num_episodes: 50
-sequence_duration_sec: 15.0
+num_episodes: 500
+sequence_duration_sec: 8.0
 traj_v_scale:
-  car1: { min: 0.9, max: 1.0 }
+  car1: { min: 1.0, max: 1.0 }
   car2: { min: 0.3, max: 0.7 }
 output:
-  base_dir: /root/f1tenth_ws/data/0529
+  base_dir: /root/f1tenth_ws/data/0630_single
 ```
+
+### 스폰 구간 제한 (`spawn_idx_ranges`)
+
+car1(ego)의 스폰 위치를 특정 raceline 구간으로 제한할 수 있습니다. 여러 구간을 지정하면 전체 후보 인덱스 풀에서 균등 샘플링(구간 길이에 비례)하며, 키를 생략하거나 `null`이면 전체 raceline에서 샘플링합니다. 특정 코너/직선 구간의 데이터만 집중 수집할 때 유용합니다.
+
+```yaml
+# 예: 코너 구간(0~80)과 직선 구간(200~350)에서만 스폰
+spawn_idx_ranges:
+  - { min: 0,   max: 80  }
+  - { min: 200, max: 350 }
+```
+
+*   구간이 겹치면 중복 인덱스는 제거되어 균등성이 유지됩니다.
+*   `max`가 raceline 길이를 넘거나 `min > max`이면 실행 시 검증 오류로 즉시 종료됩니다.
+*   구간별 행 인덱스는 `tools/inspect_raceline.py`로 확인할 수 있습니다.
 
 ## 3. 실행
 
@@ -310,7 +393,7 @@ ros2 launch f1tenth_lattice_ros2 f1tenth_lattice_gazebo.launch.py \
 ## 4. 출력 구조
 
 ```
-output.base_dir/          (예: /root/f1tenth_ws/data/0529/)
+output.base_dir/          (예: /root/f1tenth_ws/data/0630_single/)
 ├── staging/              # 녹화 중 임시 저장 위치
 ├── clean/                # 충돌 없는 에피소드 bag
 │   ├── ep_001_<timestamp>/
@@ -326,12 +409,12 @@ output.base_dir/          (예: /root/f1tenth_ws/data/0529/)
 
 ```bash
 # 단일 bag 변환
-extract --bag data/0529/clean/ep_001_<timestamp> --output data/0529/csv/ep_001.csv
+extract --bag data/0630_single/clean/ep_001_<timestamp> --output data/0630_single/csv/ep_001.csv
 
 # 전체 clean 에피소드 일괄 변환 (예시)
-for bag in data/0529/clean/*/; do
+for bag in data/0630_single/clean/*/; do
   name=$(basename "$bag")
-  extract --bag "$bag" --output "data/0529/csv/${name}.csv"
+  extract --bag "$bag" --output "data/0630_single/csv/${name}.csv"
 done
 ```
 
