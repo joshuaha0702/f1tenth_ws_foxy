@@ -22,6 +22,16 @@ import sys
 import matplotlib.pyplot as plt
 import trajectory_planning_helpers as tph
 
+# Monkeypatch dist_to_p in trajectory_planning_helpers to fix SciPy compatibility issue
+def custom_dist_to_p(t_glob, path, p):
+    if isinstance(t_glob, np.ndarray):
+        t_glob = t_glob.item() if t_glob.size == 1 else t_glob[0]
+    s = tph.spline_approximation.interpolate.splev(t_glob, path)
+    s_flat = np.array([s[0], s[1]]).flatten()
+    return tph.spline_approximation.spatial.distance.euclidean(p, s_flat)
+
+tph.spline_approximation.dist_to_p = custom_dist_to_p
+
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Generate raceline from 2D map')
@@ -32,8 +42,8 @@ def parse_arguments():
     parser.add_argument('--map_img_ext', type=str, default='.png')
     parser.add_argument('--num_lanes', type=int, default=1,
                         help='Number of lane lines to generate (raceline per lane)')
-    parser.add_argument('--clockwise', action='store_true', default=True,
-                        help='Track direction is clockwise')
+    parser.add_argument('--counter_clockwise', action='store_true', default=False,
+                        help='Track direction is counter-clockwise')
     parser.add_argument('--inner_safe_dist', type=float, default=0.4,
                         help='Safety margin from inner wall (m)')
     parser.add_argument('--outer_safe_dist', type=float, default=0.4,
@@ -44,7 +54,9 @@ def parse_arguments():
     parser.add_argument('--vehicle_mass', type=float, default=3.362)
     parser.add_argument('--drag_coeff', type=float, default=0.0075)
     parser.add_argument('--num_laps', type=int, default=2)
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.clockwise = not args.counter_clockwise
+    return args
 
 
 def reorder_vertex(image, lane, total_lane_image):
@@ -178,7 +190,8 @@ def generate_lanes(args, map_dir):
         lane = np.vstack((lane.T, right_dists, left_dists)).T
         lane = transform_coords(lane, h, scale, offset_x, offset_y)
 
-        lane_name = f'lane{idx}'
+        lane_suffix = '_ccw' if args.counter_clockwise else ''
+        lane_name = f'lane{idx}{lane_suffix}'
         csv_path = os.path.join(map_dir, f'{lane_name}.csv')
         save_csv(lane, csv_path, header=['#x_m', 'y_m', 'w_tr_right_m', 'w_tr_left_m'])
         lanes.append(lane)

@@ -28,7 +28,7 @@ def launch_setup(context, *args, **kwargs):
     # 맵별 world 파일 및 초기 위치 설정
     # monza -10 5 90
     # silverstone -10 2 90
-    # interlagos 2 -10 90
+    # interlagos 2.5 -10 90
     # car2를 위해 namespace에 따라 위치를 약간 다르게 줄 수도 있지만, 
     # 기본적으로 car1 기준으로 맵별 고정 좌표를 덮어씁니다.
     
