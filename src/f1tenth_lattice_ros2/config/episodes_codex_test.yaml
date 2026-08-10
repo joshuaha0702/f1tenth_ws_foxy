@@ -1,0 +1,24 @@
+num_episodes: 2
+raceline_path: /root/f1tenth_ws/src/f1tenth_lattice_ros2/maps/Simple/raceline1.csv
+
+opponent_offset:
+  min: 5
+  max: 50
+
+traj_v_scale:
+  car1: { min: 1.0, max: 1.0 }
+  car2: { min: 0.3, max: 0.7 }
+
+spawn_perturbation:
+  lateral_offset_m: 1.2
+  yaw_deg: 10.0
+
+random_seed: 4242
+sequence_duration_sec: 6.0
+settle_time_sec: 1.0
+
+output:
+  base_dir: /tmp/codex_f1tenth_100hz.dW4oaU/episodes
+  staging_subdir: staging
+  clean_subdir: clean
+  collision_subdir: collision

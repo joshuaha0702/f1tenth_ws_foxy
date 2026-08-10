@@ -1,19 +1,20 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 
 import numpy as np
 import math
 import time
+import threading
 
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 from visualization_msgs.msg import Marker, MarkerArray
-from std_msgs.msg import ColorRGBA, String
+from std_msgs.msg import ColorRGBA, Float64MultiArray, MultiArrayDimension, String
 from rcl_interfaces.msg import SetParametersResult
 from geometry_msgs.msg import Point, PoseStamped
-# [하드웨어 호환성] 실제 차량 구동을 위한 Ackermann 메시지 임포트
-from ackermann_msgs.msg import AckermannDriveStamped
 
 from f1tenth_lattice_ros2.planner_utils import load_config
 from f1tenth_lattice_ros2.lattice_planner import LatticePlanner
@@ -67,6 +68,7 @@ class LatticePlannerNode(Node):
         self.velocity = 0.0
         self.odom_received = False
         self.latest_odom_stamp = None
+        self.best_traj = None
 
         # Opponent state (head-to-head mode)
         self.opp_pose = np.empty((0, 3))
@@ -79,31 +81,47 @@ class LatticePlannerNode(Node):
         # 에피소드 모드: 매니저에게 STOP/START 명령을 받아 publish gate를 토글함
         # (텔레포트 직후 stale state가 다음 에피소드로 새는 것을 차단)
         self._publishing_enabled = True
+        self._plan_generation = 0
+
+        # odom/Pure Pursuit와 scan/lattice planning을 별도 스레드에서 실행한다.
+        self._control_group = MutuallyExclusiveCallbackGroup()
+        self._planning_group = MutuallyExclusiveCallbackGroup()
+
+        # 두 callback group이 공유하는 차량 상태와 trajectory를 보호한다.
+        self._state_lock = threading.Lock()
+        self._trajectory_lock = threading.Lock()
 
         # QoS
         qos = QoSProfile(depth=10)
+        # 제어 콜백이 밀릴 경우 과거 odom을 처리하지 않고 최신 상태를 사용한다.
+        odom_qos = QoSProfile(depth=1)
 
         # Subscriptions
         self.odom_sub = self.create_subscription(
-            Odometry, 'odom', self._odom_callback, qos
+            Odometry, 'odom', self._odom_callback, odom_qos,
+            callback_group=self._control_group
         )
         self.scan_sub = self.create_subscription(
-            LaserScan, 'scan', self._scan_callback, qos_profile_sensor_data
+            LaserScan, 'scan', self._scan_callback, qos_profile_sensor_data,
+            callback_group=self._planning_group
         )
         if opponent_ns:
             self.create_subscription(
-                Odometry, f'/{opponent_ns}/odom', self._opp_odom_callback, qos
+                Odometry, f'/{opponent_ns}/odom', self._opp_odom_callback, qos,
+                callback_group=self._control_group
             )
             self.get_logger().info(f'Head-to-head mode: tracking opponent /{opponent_ns}/odom')
 
-        # [하드웨어 호환성] 퍼블리셔를 AckermannDriveStamped 타입으로 변경 (실제 차량 VESC 대응)
-        self.drive_pub = self.create_publisher(AckermannDriveStamped, 'drive', qos)
+        self.trajectory_pub = self.create_publisher(
+            Float64MultiArray, 'planned_trajectory', QoSProfile(depth=1)
+        )
         self.raceline_pub = self.create_publisher(MarkerArray, 'raceline_marker', qos)
         self.best_traj_pub = self.create_publisher(Marker, 'best_traj_marker', qos)
 
         # 에피소드 매니저로부터 STOP / START 신호 수신 (네임스페이스 무관 글로벌 토픽)
         self.create_subscription(
-            String, '/episode/control', self._episode_control_callback, 10
+            String, '/episode/control', self._episode_control_callback, 10,
+            callback_group=self._control_group
         )
 
         # traj_v_scale을 런타임 변경 가능한 파라미터로 노출 (외부에서 `ros2 param set` 또는
@@ -123,39 +141,27 @@ class LatticePlannerNode(Node):
         )
 
     def _odom_callback(self, msg: Odometry):
-        self.pose_x = msg.pose.pose.position.x
-        self.pose_y = msg.pose.pose.position.y
         q = msg.pose.pose.orientation
-        self.pose_theta = quat_to_yaw(q.x, q.y, q.z, q.w)
-        self.velocity = msg.twist.twist.linear.x
-        self.latest_odom_stamp = msg.header.stamp
-        self.odom_received = True
+        pose_x = msg.pose.pose.position.x
+        pose_y = msg.pose.pose.position.y
+        pose_theta = quat_to_yaw(q.x, q.y, q.z, q.w)
+        velocity = msg.twist.twist.linear.x
 
-        if getattr(self, 'best_traj', None) is not None:
-            # Pure pursuit on the selected local trajectory at high frequency
-            steering, speed = self.planner.tracker.plan(
-                self.pose_x, self.pose_y, self.pose_theta,
-                self.velocity, self.best_traj
-            )
-
-            # Clamp outputs
-            steering = float(np.clip(steering, -self.max_steer, self.max_steer))
-            speed = float(np.clip(speed, 0.0, self.max_speed))
-
-            drive_msg = AckermannDriveStamped()
-            # 타임스탬프 = 이 drive 메시지를 실제로 발행하는 시점
-            drive_msg.header.stamp = self.get_clock().now().to_msg()
-            drive_msg.header.frame_id = 'base_link'
-            drive_msg.drive.speed = speed
-            drive_msg.drive.steering_angle = steering
-            self.drive_pub.publish(drive_msg)
+        with self._state_lock:
+            self.pose_x = pose_x
+            self.pose_y = pose_y
+            self.pose_theta = pose_theta
+            self.velocity = velocity
+            self.latest_odom_stamp = msg.header.stamp
+            self.odom_received = True
 
     def _opp_odom_callback(self, msg: Odometry):
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
         q = msg.pose.pose.orientation
         theta = quat_to_yaw(q.x, q.y, q.z, q.w)
-        self.opp_pose = np.array([[x, y, theta]])
+        with self._state_lock:
+            self.opp_pose = np.array([[x, y, theta]])
 
     def _on_param_set(self, params):
         """외부에서 SetParameters 서비스로 들어오는 파라미터 변경을 처리.
@@ -182,40 +188,38 @@ class LatticePlannerNode(Node):
     def _episode_control_callback(self, msg: String):
         cmd = msg.data.strip().upper()
         if cmd == 'STOP':
-            # 0속도 명령 한 번 박아두어 Gazebo plugin의 마지막 cmd_vel을 해제함
-            stop_msg = AckermannDriveStamped()
-            stop_msg.header.stamp = self.get_clock().now().to_msg()
-            stop_msg.header.frame_id = 'base_link'
-            stop_msg.drive.speed = 0.0
-            stop_msg.drive.steering_angle = 0.0
-            self.drive_pub.publish(stop_msg)
             # 다음 에피소드에 stale state가 새지 않도록 클리어
-            self.odom_received = False
-            self.opp_pose = np.empty((0, 3))
-            self.best_traj = None
-            # 다음 에피소드 첫 plan()에서 에피소드 사이의 긴 공백이 dt로 새지 않도록 리셋
-            self._last_plan_time = None
-            self._publishing_enabled = False
+            with self._state_lock:
+                self.odom_received = False
+                self.opp_pose = np.empty((0, 3))
+                self._last_plan_time = None
+                self._publishing_enabled = False
+                # 진행 중이던 scan planning 결과도 무효화한다.
+                self._plan_generation += 1
+            with self._trajectory_lock:
+                self.best_traj = None
+            self.trajectory_pub.publish(Float64MultiArray())
             self.get_logger().info('[episode] STOP — paused publishing & cleared state')
         elif cmd == 'START':
-            self._publishing_enabled = True
+            with self._state_lock:
+                self._publishing_enabled = True
             self.get_logger().info('[episode] START — resumed publishing')
         else:
             self.get_logger().warn(f'[episode] unknown control cmd: {msg.data!r}')
 
     def _scan_callback(self, msg: LaserScan):
-        if not self._publishing_enabled:
-            return
-        if not self.odom_received:
-            return
+        # Planning 시작 시점의 상태를 snapshot하여 odom 스레드와 독립적으로 계산한다.
+        with self._state_lock:
+            if not self._publishing_enabled or not self.odom_received:
+                return
+            pose_x = self.pose_x
+            pose_y = self.pose_y
+            pose_theta = self.pose_theta
+            velocity = self.velocity
+            opp_poses = self.opp_pose.copy()
+            plan_generation = self._plan_generation
 
-        opp_poses = self.opp_pose
-
-        try:
-            t0 = time.perf_counter()
             # 직전 plan() 호출과의 경과 시간 = 선두 차량 속도 추정용 dt.
-            # sim 시간(use_sim_time)을 따르도록 ROS 클럭으로 측정한다.
-            # 첫 호출이면 None을 넘겨 planner가 설정값 기반 기본값으로 폴백하게 한다.
             now = self.get_clock().now()
             if self._last_plan_time is not None:
                 dt = (now - self._last_plan_time).nanoseconds * 1e-9
@@ -224,9 +228,12 @@ class LatticePlannerNode(Node):
             else:
                 dt = None
             self._last_plan_time = now
+
+        try:
+            t0 = time.perf_counter()
             best_traj, best_cost, traj_cost, abs_v_cost, collision_cost = self.planner.plan(
-                self.pose_x, self.pose_y, self.pose_theta,
-                opp_poses, self.velocity, dt=dt
+                pose_x, pose_y, pose_theta,
+                opp_poses, velocity, dt=dt
             )
             elapsed = time.perf_counter() - t0
             if elapsed > 0.03:
@@ -240,12 +247,36 @@ class LatticePlannerNode(Node):
                     )
                 else:
                     self.get_logger().warn(f'[plan timing] {elapsed*1000:.1f}ms', throttle_duration_sec=1.0)
-            self.best_traj = best_traj
+            # STOP 이후 완료된 오래된 planning 결과는 다음 에피소드로 넘기지 않는다.
+            with self._state_lock:
+                plan_is_valid = (
+                    self._publishing_enabled
+                    and plan_generation == self._plan_generation
+                )
+            if not plan_is_valid:
+                return
+            with self._trajectory_lock:
+                self.best_traj = best_traj
         except Exception as e:
             self.get_logger().warn(f'Lattice plan failed: {e}', throttle_duration_sec=2.0)
             return
 
-        self._publish_best_traj(self.best_traj, msg.header.stamp)
+        self._publish_trajectory(best_traj)
+        self._publish_best_traj(best_traj, msg.header.stamp)
+
+    def _publish_trajectory(self, best_traj):
+        trajectory = np.ascontiguousarray(best_traj[:, :3], dtype=np.float64)
+        msg = Float64MultiArray()
+        msg.layout.dim = [
+            MultiArrayDimension(
+                label='points',
+                size=trajectory.shape[0],
+                stride=trajectory.size,
+            ),
+            MultiArrayDimension(label='xyv', size=3, stride=3),
+        ]
+        msg.data = trajectory.reshape(-1).tolist()
+        self.trajectory_pub.publish(msg)
 
     def _publish_raceline_once(self):
         if self._raceline_published:
@@ -308,11 +339,14 @@ class LatticePlannerNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = LatticePlannerNode()
+    executor = MultiThreadedExecutor(num_threads=2)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
+        executor.shutdown()
         node.destroy_node()
         rclpy.shutdown()
 

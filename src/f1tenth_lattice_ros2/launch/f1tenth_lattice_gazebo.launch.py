@@ -43,10 +43,18 @@ def generate_launch_description():
     _s1 = _cfg.get('car1', {}).get('spawn', {})
     _s2 = _cfg.get('car2', {}).get('spawn', {})
 
-    # 이전 가제보 좀비 프로세스를 자동으로 제거 (위치 변경이 안 되는 문제 방지)
+    # 명시적으로 요청한 경우에만 이전 Gazebo 프로세스를 정리한다. 공유 서버에서
+    # 기본 활성화하면 다른 사용자의 gzserver/gzclient까지 종료할 수 있다.
     kill_gazebo = ExecuteProcess(
         cmd=['bash', '-c', 'pkill -9 -f gzserver; pkill -9 -f gzclient; sleep 1.5; echo "[launch] Cleaned up previous Gazebo processes"'],
-        output='screen'
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('cleanup_gazebo')),
+    )
+
+    cleanup_gazebo_arg = DeclareLaunchArgument(
+        'cleanup_gazebo',
+        default_value='false',
+        description='시작 전에 기존 gzserver/gzclient를 정리할지 여부',
     )
 
     # Namespace argument (mirrors existing FGM launch)
@@ -178,6 +186,21 @@ def generate_launch_description():
         }]
     )
 
+    controller_node = Node(
+        package='f1tenth_lattice_ros2',
+        executable='pure_pursuit_controller_node',
+        name='pure_pursuit_controller',
+        namespace='car1',
+        output='screen',
+        parameters=[{
+            'config_path': config_path,
+            'raceline_path': raceline_path,
+            'max_speed': 3.0,
+            'max_steering_angle': 0.4189,
+            'use_sim_time': True,
+        }],
+    )
+
     # Ackermann to Twist Bridge — car1
     bridge_node = Node(
         package='f1tenth_fgm_ros2',
@@ -203,6 +226,21 @@ def generate_launch_description():
             'opponent_namespace': 'car1',
             'use_sim_time': True,
         }]
+    )
+
+    controller_node_car2 = Node(
+        package='f1tenth_lattice_ros2',
+        executable='pure_pursuit_controller_node',
+        name='pure_pursuit_controller',
+        namespace='car2',
+        output='screen',
+        parameters=[{
+            'config_path': config_path,
+            'raceline_path': raceline_path,
+            'max_speed': 3.0,
+            'max_steering_angle': 0.4189,
+            'use_sim_time': True,
+        }],
     )
 
     # Ackermann to Twist Bridge — car2
@@ -308,6 +346,7 @@ def generate_launch_description():
         actions=[
             spawn_car2_launch,
             lattice_node_car2,
+            controller_node_car2,
             bridge_node_car2,
             map_to_odom_node_car2,
             laser_tf_node_car2,
@@ -339,6 +378,7 @@ def generate_launch_description():
         actions=[
             spawn_car_launch,
             lattice_node,
+            controller_node,
             bridge_node,
             rviz_node,
             map_to_odom_node,
@@ -370,6 +410,7 @@ def generate_launch_description():
         record_arg,
         bag_output_arg,
         episodes_arg,
+        cleanup_gazebo_arg,
         kill_gazebo,
         delayed_launch,
         delayed_manager,
