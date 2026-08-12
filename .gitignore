@@ -23,3 +23,6 @@ __pycache__/
 bags/
 f1tenth_data/
 data/
+# LiDAR test data
+lidar_*/
+src/f1tenth_end2race_ros2/model
