@@ -4,7 +4,14 @@ import sys
 import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument, ExecuteProcess, TimerAction, GroupAction
+from launch.actions import (
+    DeclareLaunchArgument,
+    ExecuteProcess,
+    GroupAction,
+    IncludeLaunchDescription,
+    SetLaunchConfiguration,
+    TimerAction,
+)
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
@@ -36,7 +43,6 @@ def generate_launch_description():
     # 스폰 좌표 기본값도 지정한 config 기준으로 읽는다.
     _default_config_path = os.path.join(lattice_pkg, 'config', 'lattice_config.yaml')
     _config_path = _argv_value('config', _default_config_path)
-
     # Read spawn defaults from config at launch-description-generation time
     with open(_config_path) as _f:
         _cfg = yaml.safe_load(_f)
@@ -367,7 +373,7 @@ def generate_launch_description():
         parameters=[{
             'episodes_yaml': LaunchConfiguration('episodes'),
             'head2head': LaunchConfiguration('head2head'),
-            'record': LaunchConfiguration('record'),
+            'record': LaunchConfiguration('episode_record'),
             'use_sim_time': True,
         }]
     )
@@ -388,9 +394,11 @@ def generate_launch_description():
         ]
     )
 
-    # 에피소드 매니저는 모든 노드가 자리잡은 뒤 시동 (Gazebo 서비스 가용 + planner 구독자 준비)
+    # 에피소드 매니저는 모든 노드가 자리잡고 두 planner의 최초 JIT 경로가
+    # 충분히 워밍업된 뒤 시동한다. 너무 일찍 시작하면 첫 bag 초반에만 CPU
+    # 포화로 odom-triggered drive가 누락될 수 있다.
     delayed_manager = TimerAction(
-        period=6.0,
+        period=15.0,
         actions=[episode_manager_node],
     )
 
@@ -411,6 +419,11 @@ def generate_launch_description():
         bag_output_arg,
         episodes_arg,
         cleanup_gazebo_arg,
+        # gazebo.launch.py also uses ``record``. Preserve the user's data-bag
+        # setting under a private key before any included launch executes.
+        SetLaunchConfiguration(
+            'episode_record', LaunchConfiguration('record')
+        ),
         kill_gazebo,
         delayed_launch,
         delayed_manager,

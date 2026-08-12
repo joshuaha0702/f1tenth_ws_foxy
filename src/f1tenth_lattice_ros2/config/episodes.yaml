@@ -48,7 +48,7 @@ sequence_duration_sec: 8.0
 settle_time_sec: 3.0
 
 output:
-  base_dir: /root/f1tenth_ws/data/0810_head2head_100hz
+  base_dir: /root/f1tenth_ws/data/0812_head2head_100hz
   staging_subdir: staging       # 녹화 중 임시 위치
   clean_subdir: clean           # 충돌 없는 에피소드
   collision_subdir: collision   # 충돌 발생 에피소드
