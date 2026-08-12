@@ -1,16 +1,23 @@
+#!/usr/bin/env python3
+
+import os
+import glob
+import math
+import numpy as np
+import yaml
+
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile
+from rclpy.qos import QoSProfile, qos_profile_sensor_data, DurabilityPolicy, ReliabilityPolicy
+from rclpy.time import Time
 
-import numpy as np
-import math
-
-from geometry_msgs.msg import PoseWithCovarianceStamped
+from geometry_msgs.msg import PoseWithCovarianceStamped, Point, TransformStamped
+from tf2_ros import TransformBroadcaster
 from nav_msgs.msg import Odometry
+from sensor_msgs.msg import LaserScan
+from ackermann_msgs.msg import AckermannDriveStamped
 from visualization_msgs.msg import Marker, MarkerArray
 from std_msgs.msg import ColorRGBA
-from geometry_msgs.msg import Point
-from ackermann_msgs.msg import AckermannDriveStamped
 
 from f1tenth_lattice_ros2.planner_utils import load_config
 from f1tenth_lattice_ros2.lattice_planner import LatticePlanner
@@ -22,18 +29,35 @@ def quat_to_yaw(qx, qy, qz, qw):
     return math.atan2(siny_cosp, cosy_cosp)
 
 
+def resolve_map_prefix(map_path):
+    """
+    폴더 경로 또는 파일 경로가 들어왔을 때, 
+    LatticePlanner가 사용할 확장자 제거된 Prefix 경로(예: .../Simple/Simple_map)를 반환
+    """
+    if os.path.isdir(map_path):
+        yamls = glob.glob(os.path.join(map_path, '*.yaml'))
+        if not yamls:
+            raise FileNotFoundError(f"No .yaml file found inside directory: {map_path}")
+        return os.path.splitext(yamls[0])[0]
+    
+    if map_path.endswith('.yaml'):
+        return os.path.splitext(map_path)[0]
+        
+    return map_path
+
+
 class SlamLatticePlannerNode(Node):
     def __init__(self):
         super().__init__('slam_lattice_planner')
 
+        # --- Parameters ---
         self.declare_parameter('config_path', '')
         self.declare_parameter('raceline_path', '')
         self.declare_parameter('map_path', '')
         self.declare_parameter('max_speed', 3.0)
         self.declare_parameter('max_steering_angle', 0.4189)
         self.declare_parameter('plan_frequency', 10.0)
-        
-        self.declare_parameter('localization_mode', 'fusion')
+        self.declare_parameter('localization_mode', 'scan')
         self.declare_parameter('initial_x', 0.0)
         self.declare_parameter('initial_y', 0.0)
         self.declare_parameter('initial_yaw', 0.0)
@@ -41,243 +65,297 @@ class SlamLatticePlannerNode(Node):
 
         config_path = self.get_parameter('config_path').value
         raceline_path = self.get_parameter('raceline_path').value
-        map_path = self.get_parameter('map_path').value
-        self.max_speed = self.get_parameter('max_speed').value
-        self.max_steer = self.get_parameter('max_steering_angle').value
-        plan_freq = self.get_parameter('plan_frequency').value
-        opponent_ns = ''  # No opponent namespace for single-vehicle operation
-        self.localization_mode = self.get_parameter('localization_mode').value
-        self.initial_x = self.get_parameter('initial_x').value
-        self.initial_y = self.get_parameter('initial_y').value
-        self.initial_yaw = self.get_parameter('initial_yaw').value
-        self.odom_cov_scale = self.get_parameter('odom_cov_scale').value
+        raw_map_path = self.get_parameter('map_path').value
+        self.max_speed = float(self.get_parameter('max_speed').value)
+        self.max_steer = float(self.get_parameter('max_steering_angle').value)
+        self.plan_freq = float(self.get_parameter('plan_frequency').value)
+        self.localization_mode = str(self.get_parameter('localization_mode').value).lower()
+        self.initial_x = float(self.get_parameter('initial_x').value)
+        self.initial_y = float(self.get_parameter('initial_y').value)
+        self.initial_yaw = float(self.get_parameter('initial_yaw').value)
 
-        if not config_path or not raceline_path or not map_path:
+        if not config_path or not raceline_path or not raw_map_path:
             self.get_logger().fatal('config_path, raceline_path, map_path parameters are required')
             raise RuntimeError('Missing required parameters')
 
+        map_path = resolve_map_prefix(raw_map_path)
+
         self.get_logger().info(f'Loading config from: {config_path}')
         self.get_logger().info(f'Loading raceline from: {raceline_path}')
-        self.get_logger().info(f'Loading map from: {map_path}')
+        self.get_logger().info(f'Resolved map prefix: {map_path}')
 
         ns = self.get_namespace().strip('/')
+        if not ns:
+            ns = 'car1'
+        
         conf = load_config(config_path, namespace=ns)
+        if not hasattr(conf, 'traj_points'):
+            conf = load_config(config_path, namespace='')
+            if not hasattr(conf, 'traj_points'):
+                conf.traj_points = 10
+
         self.planner = LatticePlanner(conf, map_path, raceline_path)
-        self.get_logger().info('Lattice planner initialized')
+        self.get_logger().info('Lattice planner initialized successfully!')
 
         self.pose_x = self.initial_x
         self.pose_y = self.initial_y
         self.pose_theta = self.initial_yaw
         self.velocity = 0.0
-        self.odom_received = False
-        self.latest_odom_stamp = None
-
-        self.amcl_x = self.initial_x
-        self.amcl_y = self.initial_y
-        self.amcl_theta = self.initial_yaw
-        self.amcl_cov_xx = 1.0
-        self.amcl_cov_yy = 1.0
-        self.amcl_cov_aa = 1.0
         self.amcl_received = False
-        self.amcl_stamp = None
+        self.odom_received = False
 
-        self.odom_x = self.initial_x
-        self.odom_y = self.initial_y
-        self.odom_theta = self.initial_yaw
-        self.odom_cov_xx = self.odom_cov_scale
-        self.odom_cov_yy = self.odom_cov_scale
-        self.odom_cov_aa = self.odom_cov_scale
-        self.odom_stamp = None
+        self.initial_map_x = self.initial_x
+        self.initial_map_y = self.initial_y
+        self.initial_map_yaw = self.initial_yaw
+        self.odom_base_x = None
+        self.odom_base_y = None
+        self.odom_base_yaw = None
+        self.last_odom_x = None
+        self.last_odom_y = None
+        self.last_odom_yaw = None
 
-        self.opp_pose = np.empty((0, 3))  # No opponent tracking in current real-vehicle setup
+        self.last_steer = 0.0
+        self.max_steer_rate = 0.08
+
+        self.opp_pose = np.empty((0, 3))
+        self.best_traj = None
 
         qos = QoSProfile(depth=10)
+        marker_qos = QoSProfile(
+            depth=1,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=ReliabilityPolicy.RELIABLE
+        )
 
-        if self.localization_mode == 'fusion':
-            self.get_logger().info('Localization mode: FUSION (AMCL + Odometry)')
+        if self.localization_mode in ['scan', 'amcl']:
+            self.get_logger().info('Localization mode: SCAN/AMCL ONLY (Map pose from AMCL, Velocity from Odom)')
             self.create_subscription(
                 PoseWithCovarianceStamped, 'amcl_pose', self._amcl_pose_callback, qos
             )
-            self.odom_sub = self.create_subscription(
-                Odometry, 'odom', self._odom_callback, qos
-            )
-        elif self.localization_mode == 'amcl':
-            self.get_logger().info('Localization mode: AMCL ONLY')
             self.create_subscription(
-                PoseWithCovarianceStamped, 'amcl_pose', self._amcl_pose_only_callback, qos
+                PoseWithCovarianceStamped, 'initialpose', self._amcl_pose_callback, qos
             )
-            self.odom_sub = self.create_subscription(
-                Odometry, 'odom', self._odom_velocity_only_callback, qos
+            self.create_subscription(
+                Odometry, 'odom', self._odom_velocity_callback, qos
+            )
+        elif self.localization_mode == 'fusion':
+            self.get_logger().info('Localization mode: FUSION (Map anchor from AMCL + Relative Odom updates)')
+            self.create_subscription(
+                PoseWithCovarianceStamped, 'amcl_pose', self._amcl_pose_fusion_callback, qos
+            )
+            self.create_subscription(
+                PoseWithCovarianceStamped, 'initialpose', self._amcl_pose_fusion_callback, qos
+            )
+            self.create_subscription(
+                Odometry, 'odom', self._odom_fusion_callback, qos
             )
         else:
-            self.get_logger().info('Localization mode: ODOMETRY ONLY')
-            self.odom_sub = self.create_subscription(
-                Odometry, 'odom', self._odom_callback, qos
+            self.get_logger().info('Localization mode: ODOMETRY ONLY (Initial pose from 2D Pose Estimate + Odom updates)')
+            self.create_subscription(
+                PoseWithCovarianceStamped, 'amcl_pose', self._amcl_pose_callback, qos
+            )
+            self.create_subscription(
+                PoseWithCovarianceStamped, 'initialpose', self._amcl_pose_callback, qos
+            )
+            self.create_subscription(
+                Odometry, 'odom', self._odom_full_callback, qos
             )
 
-        # Opponent/head-to-head support removed for single-vehicle operation
+        self.create_subscription(
+            LaserScan, 'scan', self._scan_callback, qos_profile_sensor_data
+        )
 
         self.drive_pub = self.create_publisher(AckermannDriveStamped, 'drive', qos)
-        self.raceline_pub = self.create_publisher(MarkerArray, 'raceline_marker', qos)
+        self.raceline_pub = self.create_publisher(MarkerArray, 'raceline_marker', marker_qos)
         self.best_traj_pub = self.create_publisher(Marker, 'best_traj_marker', qos)
 
-        period = 1.0 / plan_freq
+        self.tf_broadcaster = TransformBroadcaster(self)
+
+        self.latest_drive_msg = None
+
+        period = 1.0 / max(self.plan_freq, 1.0)
         self.timer = self.create_timer(period, self._plan_callback)
 
-        self.create_timer(2.0, self._publish_raceline_once)
-        self._raceline_published = False
+        # 100Hz 연속 드라이브 명령 및 TF 스트리밍 타이머
+        self.drive_timer = self.create_timer(0.01, self._publish_drive_timer)
+
+        # 주기적으로 RViz2에 레일라인 마커 퍼블리시 (1초 간격)
+        self.create_timer(1.0, self._publish_raceline_vis)
 
         self.get_logger().info(
-            f'SLAM lattice planner ready (mode={self.localization_mode}, plan_freq={plan_freq:.1f}Hz, '
+            f'SLAM lattice planner ready (mode={self.localization_mode}, plan_freq={self.plan_freq:.1f}Hz, '
             f'max_speed={self.max_speed}m/s, max_steer={self.max_steer:.3f}rad)'
         )
 
-    def _odom_callback(self, msg: Odometry):
-        self.odom_x = msg.pose.pose.position.x
-        self.odom_y = msg.pose.pose.position.y
-        q = msg.pose.pose.orientation
-        self.odom_theta = quat_to_yaw(q.x, q.y, q.z, q.w)
-        self.velocity = msg.twist.twist.linear.x
+    def _publish_drive_timer(self):
+        if self.amcl_received:
+            t = TransformStamped()
+            t.header.stamp = self.get_clock().now().to_msg()
+            t.header.frame_id = 'map'
+            t.child_frame_id = 'odom'
+            ox_base = self.odom_base_x if self.odom_base_x is not None else 0.0
+            oy_base = self.odom_base_y if self.odom_base_y is not None else 0.0
+            oyaw_base = self.odom_base_yaw if self.odom_base_yaw is not None else 0.0
 
-        cov = msg.pose.covariance
-        self.odom_cov_xx = max(cov[0], 0.01)
-        self.odom_cov_yy = max(cov[7], 0.01)
-        self.odom_cov_aa = max(cov[35], 0.01)
+            c = math.cos(self.initial_map_yaw)
+            s = math.sin(self.initial_map_yaw)
+            t.transform.translation.x = float(self.initial_map_x - (c * ox_base - s * oy_base))
+            t.transform.translation.y = float(self.initial_map_y - (s * ox_base + c * oy_base))
+            t.transform.translation.z = 0.0
 
-        self.latest_odom_stamp = msg.header.stamp
-        self.odom_stamp = msg.header.stamp
-        self.odom_received = True
+            map_odom_yaw = self.initial_map_yaw - oyaw_base
+            cy = math.cos(map_odom_yaw * 0.5)
+            sy = math.sin(map_odom_yaw * 0.5)
+            t.transform.rotation.x = 0.0
+            t.transform.rotation.y = 0.0
+            t.transform.rotation.z = float(sy)
+            t.transform.rotation.w = float(cy)
+            self.tf_broadcaster.sendTransform(t)
 
-        if self.localization_mode == 'odom':
-            self.pose_x = self.odom_x
-            self.pose_y = self.odom_y
-            self.pose_theta = self.odom_theta
-        elif self.localization_mode == 'fusion':
-            if self.amcl_received:
-                self._fuse_poses()
-            else:
-                self.pose_x = self.odom_x
-                self.pose_y = self.odom_y
-                self.pose_theta = self.odom_theta
+        if self.latest_drive_msg is not None:
+            msg = AckermannDriveStamped()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.header.frame_id = ''
+            msg.drive.speed = float(self.latest_drive_msg.drive.speed)
+            msg.drive.steering_angle = float(self.latest_drive_msg.drive.steering_angle)
+            self.drive_pub.publish(msg)
 
-        if getattr(self, 'best_traj', None) is not None:
-            steering, speed = self.planner.tracker.plan(
-                self.pose_x, self.pose_y, self.pose_theta,
-                self.velocity, self.best_traj
-            )
-            steering = float(np.clip(steering, -self.max_steer, self.max_steer))
-            speed = float(np.clip(speed, 0.0, self.max_speed))
-
-            drive_msg = AckermannDriveStamped()
-            drive_msg.header.stamp = msg.header.stamp
-            drive_msg.header.frame_id = 'base_link'
-            drive_msg.drive.speed = speed
-            drive_msg.drive.steering_angle = steering
-            self.drive_pub.publish(drive_msg)
+    def _scan_callback(self, msg: LaserScan):
+        pass
 
     def _amcl_pose_callback(self, msg: PoseWithCovarianceStamped):
-        self.amcl_x = msg.pose.pose.position.x
-        self.amcl_y = msg.pose.pose.position.y
-        q = msg.pose.pose.orientation
-        self.amcl_theta = quat_to_yaw(q.x, q.y, q.z, q.w)
-
-        cov = msg.pose.covariance
-        self.amcl_cov_xx = max(cov[0], 0.001)
-        self.amcl_cov_yy = max(cov[7], 0.001)
-        self.amcl_cov_aa = max(cov[35], 0.001)
-
-        self.latest_odom_stamp = msg.header.stamp
-        self.amcl_stamp = msg.header.stamp
-        self.amcl_received = True
-
-        if self.odom_received:
-            self._fuse_poses()
-
-    def _amcl_pose_only_callback(self, msg: PoseWithCovarianceStamped):
         self.pose_x = msg.pose.pose.position.x
         self.pose_y = msg.pose.pose.position.y
         q = msg.pose.pose.orientation
         self.pose_theta = quat_to_yaw(q.x, q.y, q.z, q.w)
-        self.latest_odom_stamp = msg.header.stamp
+        self.initial_map_x = self.pose_x
+        self.initial_map_y = self.pose_y
+        self.initial_map_yaw = self.pose_theta
+        self.odom_base_x = None
+        self.amcl_received = True
+        self.get_logger().info(
+            f'Received Initial Pose from RViz2: x={self.pose_x:.2f}, y={self.pose_y:.2f}, yaw={self.pose_theta:.2f}',
+            throttle_duration_sec=2.0
+        )
+
+    def _odom_velocity_callback(self, msg: Odometry):
+        self.velocity = msg.twist.twist.linear.x
+        self.odom_received = True
+        self.get_logger().info(
+            f'Received Odom velocity: {self.velocity:.2f} m/s',
+            throttle_duration_sec=5.0
+        )
+
+    def _amcl_pose_fusion_callback(self, msg: PoseWithCovarianceStamped):
+        self.pose_x = msg.pose.pose.position.x
+        self.pose_y = msg.pose.pose.position.y
+        q = msg.pose.pose.orientation
+        self.pose_theta = quat_to_yaw(q.x, q.y, q.z, q.w)
+        self.amcl_received = True
+        self.last_odom_x = None
+        self.last_odom_y = None
+        self.last_odom_yaw = None
+
+    def _odom_fusion_callback(self, msg: Odometry):
+        self.velocity = msg.twist.twist.linear.x
         self.odom_received = True
 
-    def _odom_velocity_only_callback(self, msg: Odometry):
+        ox = msg.pose.pose.position.x
+        oy = msg.pose.pose.position.y
+        q = msg.pose.pose.orientation
+        oyaw = quat_to_yaw(q.x, q.y, q.z, q.w)
+
+        if self.last_odom_x is not None:
+            dx_odom = ox - self.last_odom_x
+            dy_odom = oy - self.last_odom_y
+            dyaw = oyaw - self.last_odom_yaw
+
+            c = math.cos(self.pose_theta)
+            s = math.sin(self.pose_theta)
+            self.pose_x += c * dx_odom - s * dy_odom
+            self.pose_y += s * dx_odom + c * dy_odom
+            self.pose_theta += dyaw
+            self.pose_theta = math.atan2(math.sin(self.pose_theta), math.cos(self.pose_theta))
+
+        self.last_odom_x = ox
+        self.last_odom_y = oy
+        self.last_odom_yaw = oyaw
+
+    def _odom_full_callback(self, msg: Odometry):
         self.velocity = msg.twist.twist.linear.x
+        self.odom_received = True
 
-    def _fuse_poses(self):
-        now = self.get_clock().now()
-        amcl_age = 0.0
-        odom_age = 0.0
-        if self.amcl_stamp is not None:
-            amcl_age = (now - self.amcl_stamp).nanoseconds * 1e-9
-        if self.odom_stamp is not None:
-            odom_age = (now - self.odom_stamp).nanoseconds * 1e-9
+        if not self.amcl_received:
+            return
 
-        amcl_decay = 1.0
-        if amcl_age > 1.0:
-            amcl_decay = max(0.2, 1.0 - 0.25 * (amcl_age - 1.0))
+        ox = msg.pose.pose.position.x
+        oy = msg.pose.pose.position.y
+        q = msg.pose.pose.orientation
+        oyaw = quat_to_yaw(q.x, q.y, q.z, q.w)
 
-        odom_decay = 1.0
-        if odom_age > 0.5:
-            odom_decay = max(0.3, 1.0 - 0.5 * (odom_age - 0.5))
+        if self.odom_base_x is None:
+            self.odom_base_x = ox
+            self.odom_base_y = oy
+            self.odom_base_yaw = oyaw
 
-        amcl_trust_x = amcl_decay / max(self.amcl_cov_xx, 1e-4)
-        amcl_trust_y = amcl_decay / max(self.amcl_cov_yy, 1e-4)
-        odom_trust_x = odom_decay / max(self.odom_cov_xx / self.odom_cov_scale, 1e-4)
-        odom_trust_y = odom_decay / max(self.odom_cov_yy / self.odom_cov_scale, 1e-4)
+        dx = ox - self.odom_base_x
+        dy = oy - self.odom_base_y
+        dyaw = oyaw - self.odom_base_yaw
 
-        total_trust_x = amcl_trust_x + odom_trust_x
-        total_trust_y = amcl_trust_y + odom_trust_y
-        amcl_weight_x = amcl_trust_x / total_trust_x
-        odom_weight_x = odom_trust_x / total_trust_x
-        amcl_weight_y = amcl_trust_y / total_trust_y
-        odom_weight_y = odom_trust_y / total_trust_y
-
-        amcl_trust_a = amcl_decay / max(self.amcl_cov_aa, 1e-4)
-        odom_trust_a = odom_decay / max(self.odom_cov_aa / self.odom_cov_scale, 1e-4)
-        total_trust_a = amcl_trust_a + odom_trust_a
-        amcl_weight_a = amcl_trust_a / total_trust_a
-
-        self.pose_x = amcl_weight_x * self.amcl_x + odom_weight_x * self.odom_x
-        self.pose_y = amcl_weight_y * self.amcl_y + odom_weight_y * self.odom_y
-        self.pose_theta = self._circular_mean(self.amcl_theta, self.odom_theta, amcl_weight_a)
-
-    def _circular_mean(self, angle1, angle2, weight1):
-        x1 = np.cos(angle1)
-        y1 = np.sin(angle1)
-        x2 = np.cos(angle2)
-        y2 = np.sin(angle2)
-        x_mean = weight1 * x1 + (1 - weight1) * x2
-        y_mean = weight1 * y1 + (1 - weight1) * y2
-        return math.atan2(y_mean, x_mean)
-
-    def _opp_odom_callback(self, msg: Odometry):
-        # Opponent odometry callback removed for single-vehicle operation
-        pass
+        c = math.cos(self.initial_map_yaw)
+        s = math.sin(self.initial_map_yaw)
+        self.pose_x = self.initial_map_x + (c * dx - s * dy)
+        self.pose_y = self.initial_map_y + (s * dx + c * dy)
+        self.pose_theta = self.initial_map_yaw + dyaw
 
     def _plan_callback(self):
-        if not self.odom_received:
+        if not self.amcl_received:
+            self.get_logger().info(
+                f'Waiting for Initial 2D Pose Estimate from RViz2... (initialpose received={self.amcl_received}, odom received={self.odom_received})',
+                throttle_duration_sec=3.0
+            )
             return
 
         try:
             best_traj, best_cost, traj_cost, abs_v_cost, collision_cost = self.planner.plan(
                 self.pose_x, self.pose_y, self.pose_theta,
-                np.empty((0, 3)), self.velocity
+                self.opp_pose, self.velocity
             )
             self.best_traj = best_traj
         except Exception as e:
             self.get_logger().warn(f'Lattice plan failed: {e}', throttle_duration_sec=2.0)
             return
 
-        now = self.get_clock().now().to_msg()
+        if self.best_traj is not None:
+            steering, speed = self.planner.tracker.plan(
+                self.pose_x, self.pose_y, self.pose_theta,
+                self.velocity, self.best_traj
+            )
 
-        self._publish_best_traj(self.best_traj, now)
+            steer_diff = steering - self.last_steer
+            steer_diff = max(min(steer_diff, self.max_steer_rate), -self.max_steer_rate)
+            steering = self.last_steer + steer_diff
+            self.last_steer = steering
 
-    def _publish_raceline_once(self):
-        if self._raceline_published:
-            return
-        self._raceline_published = True
+            steering = float(np.clip(steering, -self.max_steer, self.max_steer))
+            speed = float(np.clip(speed, 0.0, self.max_speed))
 
+            self.get_logger().info(
+                f'Planning active: pose=({self.pose_x:.2f}, {self.pose_y:.2f}), steer={steering:.3f}rad, speed={speed:.2f}m/s',
+                throttle_duration_sec=2.0
+            )
+
+            drive_msg = AckermannDriveStamped()
+            drive_msg.header.stamp = self.get_clock().now().to_msg()
+            drive_msg.header.frame_id = ''
+            drive_msg.drive.speed = speed
+            drive_msg.drive.steering_angle = steering
+            self.latest_drive_msg = drive_msg
+
+            now = self.get_clock().now().to_msg()
+            self._publish_best_traj(self.best_traj, now)
+
+    def _publish_raceline_vis(self):
         waypoints = self.planner.waypoints
         marker_array = MarkerArray()
 
@@ -289,7 +367,8 @@ class SlamLatticePlannerNode(Node):
         line.type = Marker.LINE_STRIP
         line.action = Marker.ADD
         line.scale.x = 0.05
-        line.color = ColorRGBA(r=0.0, g=1.0, b=0.0, a=0.8)
+        # 소프트 시안 / 파란색 (눈 피로 감소)
+        line.color = ColorRGBA(r=0.0, g=0.6, b=1.0, a=0.6)
         line.pose.orientation.w = 1.0
 
         for wp in waypoints:
@@ -306,7 +385,6 @@ class SlamLatticePlannerNode(Node):
 
         marker_array.markers.append(line)
         self.raceline_pub.publish(marker_array)
-        self.get_logger().info('Raceline visualization published')
 
     def _publish_best_traj(self, best_traj, stamp):
         marker = Marker()
@@ -317,7 +395,8 @@ class SlamLatticePlannerNode(Node):
         marker.type = Marker.LINE_STRIP
         marker.action = Marker.ADD
         marker.scale.x = 0.08
-        marker.color = ColorRGBA(r=1.0, g=0.5, b=0.0, a=0.9)
+        # 소프트 엘로우 / 골드 (선명하지만 눈이 아프지 않은 색상)
+        marker.color = ColorRGBA(r=1.0, g=0.85, b=0.1, a=0.95)
         marker.pose.orientation.w = 1.0
 
         for pt in best_traj:

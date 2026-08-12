@@ -1,7 +1,7 @@
 slam_toolbox:
   ros__parameters:
 
-    # Plugin params
+    # --- Plugin Params ---
     solver_plugin: solver_plugins::CeresSolver
     ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
     ceres_preconditioner: SCHUR_JACOBI
@@ -9,65 +9,66 @@ slam_toolbox:
     ceres_dogleg_type: TRADITIONAL_DOGLEG
     ceres_loss_function: None
 
-    # ROS Parameters
-    odom_frame: odom            # 만약 네임스페이스(예: car1)를 사용한다면 car1/odom 으로 변경이 필요할 수 있습니다.
+    # --- ROS Frame & Topic Settings ---
+    odom_frame: odom
     map_frame: map
-    base_frame: base_link       # 기존 base_footprint 에서 base_link 로 수정되었습니다.
-    scan_topic: /scan           # 만약 네임스페이스(예: car1)를 사용한다면 /car1/scan 으로 변경이 필요할 수 있습니다.
-    mode: mapping #localization
+    base_frame: base_link
+    scan_topic: /scan
+    mode: mapping
 
-    # if you'd like to immediately start continuing a map at a given pose
-    # or at the dock, but they are mutually exclusive, if pose is given
-    # will use pose
-    #map_file_name: test_steve
-    # map_start_pose: [0.0, 0.0, 0.0]
-    #map_start_at_dock: true
-
+    # --- Debug & Performance Settings ---
     debug_logging: false
     throttle_scans: 1
-    transform_publish_period: 0.02 #if 0 never publishes odometry
-    map_update_interval: 5.0
-    resolution: 0.05
-    max_laser_range: 20.0 #for rastering images
-    minimum_time_interval: 0.5
-    transform_timeout: 0.2
-    tf_buffer_duration: 30.
-    stack_size_to_use: 40000000 #// program needs a larger stack size to serialize large maps
+    transform_publish_period: 0.02   # 50Hz (TF 브로드캐스팅 주기 - 위치 추적 미끄러짐 방지)
+    map_update_interval: 2.0        # 2초마다 맵을 누적 업데이트하여 맵 왜곡 방지
+    resolution: 0.05                 # 맵 해상도 (5cm Grid)
+    max_laser_range: 12.0            # 먼 노이즈 노이즈 제거 (실내/트랙 유효 거리)
+    minimum_time_interval: 0.1
+    transform_timeout: 0.5
+    tf_buffer_duration: 30.0
+    stack_size_to_use: 40000000
     enable_interactive_mode: true
 
-    # General Parameters
+    # --- LiDAR + Odometry Fusion Settings (핵심 보정) ---
     use_scan_matching: true
     use_scan_barycenter: true
-    minimum_travel_distance: 0.5
-    minimum_travel_heading: 0.5
-    scan_buffer_size: 10
+    
+    # [수정] 오도메트리가 급격하게 변해도 라이다가 잦은 업데이트로 맵 찌그러짐을 방지하도록 설정
+    minimum_travel_distance: 0.15    # 15cm 이동 시 스캔 매칭 수행
+    minimum_travel_heading: 0.15     # 약 8.6도 회전 시 스캔 매칭 수행
+    
+    scan_buffer_size: 15
     scan_buffer_maximum_scan_distance: 10.0
-    link_match_minimum_response_fine: 0.1  
+    link_match_minimum_response_fine: 0.15
     link_scan_maximum_distance: 1.5
-    loop_search_maximum_distance: 3.0
+    loop_search_maximum_distance: 4.0
+    
+    # [중요] 한 바퀴 돌았을 때 오차를 보정해주는 Loop Closure 설정 강화
     do_loop_closing: true 
     loop_match_minimum_chain_size: 10           
     loop_match_maximum_variance_coarse: 3.0  
     loop_match_minimum_response_coarse: 0.35    
     loop_match_minimum_response_fine: 0.45
 
-    # Correlation Parameters - Correlation Parameters
+    # --- Correlation & Loop Search Parameters ---
     correlation_search_space_dimension: 0.5
     correlation_search_space_resolution: 0.01
     correlation_search_space_smear_deviation: 0.1 
 
-    # Correlation Parameters - Loop Closure Parameters
     loop_search_space_dimension: 8.0
     loop_search_space_resolution: 0.05
     loop_search_space_smear_deviation: 0.03
 
-    # Scan Matcher Parameters
-    distance_variance_penalty: 0.5      
-    angle_variance_penalty: 1.0    
+    # --- Scan Matcher & Penalty Tuning (융합 가중치 설정) ---
+    # [핵심] 오도메트리 이동/회전 변화량에 과도한 신뢰를 주지 않도록 페널티를 적절히 배분 (0.1~0.3)
+    # 바퀴 슬립이 일어났을 때 라이다가 오도메트리 오차를 완충할 수 있게 해줍니다.
+    distance_variance_penalty: 0.2
+    angle_variance_penalty: 0.3
 
     fine_search_angle_offset: 0.00349     
     coarse_search_angle_offset: 0.349   
     coarse_angle_resolution: 0.0349        
-    minimum_angle_penalty: 0.9
-    minimum_distance_penalty: 0.5
+    
+    minimum_angle_penalty: 0.2
+    minimum_distance_penalty: 0.2
     use_response_expansion: true

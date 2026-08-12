@@ -11,7 +11,9 @@ amcl:
     min_particles: 500
     max_particles: 2000
     
-    # Initial pose
+    # Initial pose (초기 위치 리셋 활성화)
+    set_initial_pose: true
+    always_reset_initial_pose: true
     initial_pose_x: 0.0
     initial_pose_y: 0.0
     initial_pose_a: 0.0
