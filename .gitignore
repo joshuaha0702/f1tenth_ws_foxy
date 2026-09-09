@@ -26,3 +26,6 @@ data/
 # LiDAR test data
 lidar_*/
 src/f1tenth_end2race_ros2/model
+
+# 2D Gym Simulator (Sub-repo)
+src/f1tenth_gym_ros/

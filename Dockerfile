@@ -1,5 +1,10 @@
-FROM osrf/ros:foxy-desktop
-
+# 예시 (JetPack 버전에 맞게 l4t-r32.7.1 부분을 수정해야 할 수 있음)
+FROM dustynv/ros:foxy-ros-base-l4t-r32.7.1
+RUN apt-key del F42ED6FBAB17C654 || true && \
+    apt-get update || true && \
+    apt-get install -y curl && \
+    curl -s https://raw.githubusercontent.com/ros/rosdistro/master/ros.key | apt-key add -
+    
 # 1. Install basic utilities and build tools
 RUN apt-get update && apt-get install -y \
     python3-pip \
