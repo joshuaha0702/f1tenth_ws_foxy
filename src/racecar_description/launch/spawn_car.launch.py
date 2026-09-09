@@ -19,6 +19,7 @@ def launch_setup(context, *args, **kwargs):
     launch_gazebo = LaunchConfiguration('launch_gazebo')
     visualize_lidar = LaunchConfiguration('visualize_lidar')
     gui = LaunchConfiguration('gui')
+    gazebo_record = LaunchConfiguration('gazebo_record')
     
     # 전달받은 좌표 (기본적으로 f1tenth_lattice_gazebo.launch.py 에서 전달됨)
     spawn_x = LaunchConfiguration('x').perform(context)
@@ -28,7 +29,7 @@ def launch_setup(context, *args, **kwargs):
     # 맵별 world 파일 및 초기 위치 설정
     # monza -10 5 90
     # silverstone -10 2 90
-    # interlagos 2 -10 90
+    # interlagos 2.5 -10 90
     # car2를 위해 namespace에 따라 위치를 약간 다르게 줄 수도 있지만, 
     # 기본적으로 car1 기준으로 맵별 고정 좌표를 덮어씁니다.
     
@@ -76,6 +77,8 @@ def launch_setup(context, *args, **kwargs):
             'world': world_file_path,
             'verbose': 'true',
             'gui': gui,
+            # 상위 데이터 수집용 record 인자와 Gazebo state log를 분리한다.
+            'record': gazebo_record,
         }.items(),
         condition=IfCondition(launch_gazebo)
     )
@@ -106,6 +109,10 @@ def generate_launch_description():
     declare_launch_gazebo_cmd = DeclareLaunchArgument('launch_gazebo', default_value='true')
     declare_gui_cmd = DeclareLaunchArgument('gui', default_value='true',
                                             description='Set to "false" to run Gazebo headless (gzserver only)')
+    declare_gazebo_record_cmd = DeclareLaunchArgument(
+        'gazebo_record', default_value='false',
+        description='Record Gazebo state log separately from ROS bag recording'
+    )
     declare_color_cmd = DeclareLaunchArgument('color', default_value='blue')
     declare_visualize_lidar_cmd = DeclareLaunchArgument('visualize_lidar', default_value='true',
                                                         description='LiDAR 레이 시각화 여부')
@@ -118,6 +125,7 @@ def generate_launch_description():
         declare_yaw_cmd,
         declare_launch_gazebo_cmd,
         declare_gui_cmd,
+        declare_gazebo_record_cmd,
         declare_color_cmd,
         declare_visualize_lidar_cmd,
         OpaqueFunction(function=launch_setup)

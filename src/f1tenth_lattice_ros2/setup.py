@@ -36,7 +36,9 @@ setup(
         'console_scripts': [
             'lattice_planner_node = f1tenth_lattice_ros2.planner_node:main',
             'slam_planner_node = f1tenth_lattice_ros2.slam_planner_node:main',
+            'slam_lattice_planner_node = f1tenth_lattice_ros2.slam_planner_node:main',
             'scan_odom_localization_node = f1tenth_lattice_ros2.scan_odom_localization_node:main',
+            'pure_pursuit_controller_node = f1tenth_lattice_ros2.pure_pursuit_controller_node:main',
             'episode_manager_node = f1tenth_lattice_ros2.episode_manager_node:main',
             'bag2gazebo_node = f1tenth_lattice_ros2.bag2gazebo_node:main',
             'joy_bag_recorder_node = f1tenth_lattice_ros2.joy_bag_recorder_node:main',

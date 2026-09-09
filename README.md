@@ -552,6 +552,9 @@ docker run -dit \
   -v "$PWD/data:/root/f1tenth_ws/data" \
   f1tenth_ws_foxy-ros2_humble \
   bash
+
+export DISPLAY=localhost:10.0
+export XAUTHORITY=/root/.Xauthority
 ```
 
 ## 📄 License

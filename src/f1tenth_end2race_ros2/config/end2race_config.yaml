@@ -9,7 +9,7 @@
       max_steer: 0.52
       min_steer: -0.52
       max_speed: 3.0
-
+      speed_scale: 0.5  # 1.0이 원본 속도, 0.5는 절반 속도
 
     environment:
       map_name: "Simple_map"

@@ -4,7 +4,14 @@ import sys
 import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument, ExecuteProcess, TimerAction, GroupAction
+from launch.actions import (
+    DeclareLaunchArgument,
+    ExecuteProcess,
+    GroupAction,
+    IncludeLaunchDescription,
+    SetLaunchConfiguration,
+    TimerAction,
+)
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
@@ -36,17 +43,24 @@ def generate_launch_description():
     # 스폰 좌표 기본값도 지정한 config 기준으로 읽는다.
     _default_config_path = os.path.join(lattice_pkg, 'config', 'lattice_config.yaml')
     _config_path = _argv_value('config', _default_config_path)
-
     # Read spawn defaults from config at launch-description-generation time
     with open(_config_path) as _f:
         _cfg = yaml.safe_load(_f)
     _s1 = _cfg.get('car1', {}).get('spawn', {})
     _s2 = _cfg.get('car2', {}).get('spawn', {})
 
-    # 이전 가제보 좀비 프로세스를 자동으로 제거 (위치 변경이 안 되는 문제 방지)
+    # 명시적으로 요청한 경우에만 이전 Gazebo 프로세스를 정리한다. 공유 서버에서
+    # 기본 활성화하면 다른 사용자의 gzserver/gzclient까지 종료할 수 있다.
     kill_gazebo = ExecuteProcess(
         cmd=['bash', '-c', 'pkill -9 -f gzserver; pkill -9 -f gzclient; sleep 1.5; echo "[launch] Cleaned up previous Gazebo processes"'],
-        output='screen'
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('cleanup_gazebo')),
+    )
+
+    cleanup_gazebo_arg = DeclareLaunchArgument(
+        'cleanup_gazebo',
+        default_value='false',
+        description='시작 전에 기존 gzserver/gzclient를 정리할지 여부',
     )
 
     # Namespace argument (mirrors existing FGM launch)
@@ -178,6 +192,21 @@ def generate_launch_description():
         }]
     )
 
+    controller_node = Node(
+        package='f1tenth_lattice_ros2',
+        executable='pure_pursuit_controller_node',
+        name='pure_pursuit_controller',
+        namespace='car1',
+        output='screen',
+        parameters=[{
+            'config_path': config_path,
+            'raceline_path': raceline_path,
+            'max_speed': 3.0,
+            'max_steering_angle': 0.4189,
+            'use_sim_time': True,
+        }],
+    )
+
     # Ackermann to Twist Bridge — car1
     bridge_node = Node(
         package='f1tenth_fgm_ros2',
@@ -203,6 +232,21 @@ def generate_launch_description():
             'opponent_namespace': 'car1',
             'use_sim_time': True,
         }]
+    )
+
+    controller_node_car2 = Node(
+        package='f1tenth_lattice_ros2',
+        executable='pure_pursuit_controller_node',
+        name='pure_pursuit_controller',
+        namespace='car2',
+        output='screen',
+        parameters=[{
+            'config_path': config_path,
+            'raceline_path': raceline_path,
+            'max_speed': 3.0,
+            'max_steering_angle': 0.4189,
+            'use_sim_time': True,
+        }],
     )
 
     # Ackermann to Twist Bridge — car2
@@ -308,6 +352,7 @@ def generate_launch_description():
         actions=[
             spawn_car2_launch,
             lattice_node_car2,
+            controller_node_car2,
             bridge_node_car2,
             map_to_odom_node_car2,
             laser_tf_node_car2,
@@ -328,7 +373,7 @@ def generate_launch_description():
         parameters=[{
             'episodes_yaml': LaunchConfiguration('episodes'),
             'head2head': LaunchConfiguration('head2head'),
-            'record': LaunchConfiguration('record'),
+            'record': LaunchConfiguration('episode_record'),
             'use_sim_time': True,
         }]
     )
@@ -339,6 +384,7 @@ def generate_launch_description():
         actions=[
             spawn_car_launch,
             lattice_node,
+            controller_node,
             bridge_node,
             rviz_node,
             map_to_odom_node,
@@ -348,9 +394,11 @@ def generate_launch_description():
         ]
     )
 
-    # 에피소드 매니저는 모든 노드가 자리잡은 뒤 시동 (Gazebo 서비스 가용 + planner 구독자 준비)
+    # 에피소드 매니저는 모든 노드가 자리잡고 두 planner의 최초 JIT 경로가
+    # 충분히 워밍업된 뒤 시동한다. 너무 일찍 시작하면 첫 bag 초반에만 CPU
+    # 포화로 odom-triggered drive가 누락될 수 있다.
     delayed_manager = TimerAction(
-        period=6.0,
+        period=15.0,
         actions=[episode_manager_node],
     )
 
@@ -370,6 +418,12 @@ def generate_launch_description():
         record_arg,
         bag_output_arg,
         episodes_arg,
+        cleanup_gazebo_arg,
+        # gazebo.launch.py also uses ``record``. Preserve the user's data-bag
+        # setting under a private key before any included launch executes.
+        SetLaunchConfiguration(
+            'episode_record', LaunchConfiguration('record')
+        ),
         kill_gazebo,
         delayed_launch,
         delayed_manager,
