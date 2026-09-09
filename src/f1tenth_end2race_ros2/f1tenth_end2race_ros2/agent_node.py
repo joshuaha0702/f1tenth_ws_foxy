@@ -132,6 +132,7 @@ class End2RaceAgent(Node):
 
         steer_out = float(actions[0])
         speed_out = float(np.clip(actions[1], 0.0, self.max_speed))
+        
         self.current_speed = speed_out
 
         drive_msg = AckermannDriveStamped()

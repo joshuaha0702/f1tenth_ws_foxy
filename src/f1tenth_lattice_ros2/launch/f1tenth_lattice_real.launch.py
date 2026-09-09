@@ -147,6 +147,28 @@ def generate_launch_description():
         ]
     )
 
+    # 6. Joy Bag Recorder Node (조이스틱 버튼으로 ros2 bag 시작/중지)
+    record_bag_arg = DeclareLaunchArgument(
+        'record_bag',
+        default_value='true',
+        description='Enable joy_bag_recorder_node for joystick triggered ros2 bag recording'
+    )
+    record_bag = LaunchConfiguration('record_bag')
+
+    joy_bag_recorder_node = Node(
+        package='f1tenth_lattice_ros2',
+        executable='joy_bag_recorder_node',
+        name='joy_bag_recorder',
+        output='screen',
+        parameters=[{
+            'start_button': 7,  # 7번 버튼: 시작
+            'stop_button': 6,   # 6번 버튼: 중지
+            'bag_prefix': 'f1tenth_run',
+            'output_dir': 'bags'
+        }],
+        condition=IfCondition(record_bag)
+    )
+
     return LaunchDescription([
         map_name_arg,
         raceline_arg,
@@ -157,9 +179,11 @@ def generate_launch_description():
         plan_freq_arg,
         loc_mode_arg,
         use_global_loc_arg,
+        record_bag_arg,
         map_server_node,
         amcl_node,
         lifecycle_manager_node,
         delay_global_loc,
-        lattice_planner_node
+        lattice_planner_node,
+        joy_bag_recorder_node
     ])

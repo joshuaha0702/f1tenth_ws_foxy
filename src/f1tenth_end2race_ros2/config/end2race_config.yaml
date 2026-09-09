@@ -2,13 +2,14 @@
   ros__parameters:
     robot_name: "car1"
     # 실제 경로는 launch에서 패키지 share 기준으로 주입됨 (standalone 실행 시에만 사용되는 fallback)
-    model_path: "models/end2race.pth"
+    model_path: "models/origin_20260706.pth"
     hidden_scale: 4
     
     control:
       max_steer: 0.52
       min_steer: -0.52
-      max_speed: 4.0
+      max_speed: 3.0
+
 
     environment:
       map_name: "Simple_map"

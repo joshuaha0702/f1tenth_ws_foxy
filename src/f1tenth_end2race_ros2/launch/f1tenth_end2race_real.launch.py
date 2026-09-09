@@ -70,10 +70,35 @@ def generate_launch_description():
         condition=IfCondition(use_rviz)
     )
 
+    # ============================================================
+    # Joy Bag Recorder Node (조이스틱 7번/6번 버튼 녹화 제어)
+    # ============================================================
+    record_bag_arg = DeclareLaunchArgument(
+        'record_bag', default_value='true',
+        description='Enable joy_bag_recorder_node for joystick triggered ros2 bag recording'
+    )
+    record_bag = LaunchConfiguration('record_bag')
+
+    joy_bag_recorder_node = Node(
+        package='f1tenth_lattice_ros2',
+        executable='joy_bag_recorder_node',
+        name='joy_bag_recorder',
+        output='screen',
+        parameters=[{
+            'start_button': 7,  # 7번 버튼: 시작
+            'stop_button': 6,   # 6번 버튼: 중지
+            'bag_prefix': 'end2race_run',
+            'output_dir': 'bags'
+        }],
+        condition=IfCondition(record_bag)
+    )
+
     return LaunchDescription([
         namespace_arg,
         model_path_arg,
         use_rviz_arg,
+        record_bag_arg,
         agent_node,
         rviz_node,
+        joy_bag_recorder_node,
     ])

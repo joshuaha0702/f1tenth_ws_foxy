@@ -39,6 +39,7 @@ setup(
             'scan_odom_localization_node = f1tenth_lattice_ros2.scan_odom_localization_node:main',
             'episode_manager_node = f1tenth_lattice_ros2.episode_manager_node:main',
             'bag2gazebo_node = f1tenth_lattice_ros2.bag2gazebo_node:main',
+            'joy_bag_recorder_node = f1tenth_lattice_ros2.joy_bag_recorder_node:main',
         ],
     },
 )
