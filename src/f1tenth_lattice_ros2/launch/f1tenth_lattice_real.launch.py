@@ -124,8 +124,8 @@ def generate_launch_description():
         actions=[trigger_global_loc]
     )
 
-    # 5. SLAM Lattice Planner Node (주행 플래너)
-    # [수정] max_steering_angle을 0.4189에서 0.31로 낮추어 VESC 서보 클리핑(0.15) 발생 차단
+    # 5. SLAM Lattice Planner Node (주행 플래너 - planned_trajectory 발행)
+    # [수정] max_steering_angle을 0.4189에서 0.26으로 낮추어 VESC 서보 클리핑 발생 차단
     lattice_planner_node = Node(
         package='f1tenth_lattice_ros2',
         executable='slam_planner_node',
@@ -136,8 +136,25 @@ def generate_launch_description():
             'raceline_path': raceline,
             'map_path': map_dir,
             'max_speed': max_speed,
-            'max_steering_angle': 0.26,  # <--- VESC 서보 0.85 클리핑 완전 방지 한계값 (-0.26 rad -> servo 0.8459)
+            'max_steering_angle': 0.26,
             'plan_frequency': plan_freq,
+            'localization_mode': loc_mode,
+            'use_sim_time': False
+        }]
+    )
+
+    # 6. SLAM Pure Pursuit Controller Node (100Hz 전용 독립 제어기)
+    pure_pursuit_controller_node = Node(
+        package='f1tenth_lattice_ros2',
+        executable='slam_pure_pursuit_controller_node',
+        name='slam_pure_pursuit_controller',
+        output='screen',
+        parameters=[{
+            'config_path': config_path,
+            'raceline_path': raceline,
+            'max_speed': max_speed,
+            'max_steering_angle': 0.26,
+            'control_frequency': 100.0,
             'localization_mode': loc_mode,
             'use_sim_time': False
         }],
@@ -147,7 +164,7 @@ def generate_launch_description():
         ]
     )
 
-    # 6. Joy Bag Recorder Node (조이스틱 버튼으로 ros2 bag 시작/중지)
+    # 7. Joy Bag Recorder Node (조이스틱 버튼으로 ros2 bag 시작/중지)
     record_bag_arg = DeclareLaunchArgument(
         'record_bag',
         default_value='true',
@@ -185,5 +202,6 @@ def generate_launch_description():
         lifecycle_manager_node,
         delay_global_loc,
         lattice_planner_node,
+        pure_pursuit_controller_node,
         joy_bag_recorder_node
     ])

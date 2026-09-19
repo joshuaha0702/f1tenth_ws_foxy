@@ -47,8 +47,8 @@ car1:
   # [대조군 파라미터 적용: car2 동일 설정]
   # [Follow, Map Collision, Path Similarity/Heading, Opponent]
   cost_weights:
-    - 0.10
-    - 10.0
+    - 2.0
+    - 0.5
     - 0.003
     - 0.0
   minL: 0.2

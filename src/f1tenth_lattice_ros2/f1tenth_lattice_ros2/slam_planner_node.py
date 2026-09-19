@@ -15,9 +15,8 @@ from geometry_msgs.msg import PoseWithCovarianceStamped, Point, TransformStamped
 from tf2_ros import TransformBroadcaster
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
-from ackermann_msgs.msg import AckermannDriveStamped
 from visualization_msgs.msg import Marker, MarkerArray
-from std_msgs.msg import ColorRGBA
+from std_msgs.msg import ColorRGBA, Float64MultiArray, MultiArrayDimension
 
 from f1tenth_lattice_ros2.planner_utils import load_config
 from f1tenth_lattice_ros2.lattice_planner import LatticePlanner
@@ -55,7 +54,7 @@ class SlamLatticePlannerNode(Node):
         self.declare_parameter('raceline_path', '')
         self.declare_parameter('map_path', '')
         self.declare_parameter('max_speed', 3.0)
-        self.declare_parameter('max_steering_angle', 0.4189)
+        self.declare_parameter('max_steering_angle', 0.26)
         self.declare_parameter('plan_frequency', 10.0)
         self.declare_parameter('localization_mode', 'scan')
         self.declare_parameter('initial_x', 0.0)
@@ -114,9 +113,6 @@ class SlamLatticePlannerNode(Node):
         self.last_odom_y = None
         self.last_odom_yaw = None
 
-        self.last_steer = 0.0
-        self.max_steer_rate = 0.08
-
         self.opp_pose = np.empty((0, 3))
         self.best_traj = None
 
@@ -165,105 +161,110 @@ class SlamLatticePlannerNode(Node):
             LaserScan, 'scan', self._scan_callback, qos_profile_sensor_data
         )
 
-        self.drive_pub = self.create_publisher(AckermannDriveStamped, 'drive', qos)
+        # Planned trajectory publisher (read by pure_pursuit_controller_node)
+        self.trajectory_pub = self.create_publisher(
+            Float64MultiArray, 'planned_trajectory', QoSProfile(depth=1)
+        )
         self.raceline_pub = self.create_publisher(MarkerArray, 'raceline_marker', marker_qos)
         self.best_traj_pub = self.create_publisher(Marker, 'best_traj_marker', qos)
 
         self.tf_broadcaster = TransformBroadcaster(self)
 
-        self.latest_drive_msg = None
-
+        # Planning Timer
         period = 1.0 / max(self.plan_freq, 1.0)
         self.timer = self.create_timer(period, self._plan_callback)
 
-        # 100Hz 연속 드라이브 명령 및 TF 스트리밍 타이머
-        self.drive_timer = self.create_timer(0.01, self._publish_drive_timer)
+        # TF Broadcast Timer (50Hz)
+        self.tf_timer = self.create_timer(0.02, self._publish_tf_timer)
 
-        # 주기적으로 RViz2에 레일라인 마커 퍼블리시 (1초 간격)
+        # Raceline visualization marker (1s interval)
         self.create_timer(1.0, self._publish_raceline_vis)
 
         self.get_logger().info(
             f'SLAM lattice planner ready (mode={self.localization_mode}, plan_freq={self.plan_freq:.1f}Hz, '
-            f'max_speed={self.max_speed}m/s, max_steer={self.max_steer:.3f}rad)'
+            f'max_speed={self.max_speed}m/s, max_steer={self.max_steer:.3f}rad, trajectory isolated)'
         )
 
-    def _publish_drive_timer(self):
-        if self.amcl_received:
-            t = TransformStamped()
-            t.header.stamp = self.get_clock().now().to_msg()
-            t.header.frame_id = 'map'
-            t.child_frame_id = 'odom'
-            ox_base = self.odom_base_x if self.odom_base_x is not None else 0.0
-            oy_base = self.odom_base_y if self.odom_base_y is not None else 0.0
-            oyaw_base = self.odom_base_yaw if self.odom_base_yaw is not None else 0.0
+    def _publish_tf_timer(self):
+        if not self.amcl_received:
+            return
 
-            c = math.cos(self.initial_map_yaw)
-            s = math.sin(self.initial_map_yaw)
-            t.transform.translation.x = float(self.initial_map_x - (c * ox_base - s * oy_base))
-            t.transform.translation.y = float(self.initial_map_y - (s * ox_base + c * oy_base))
-            t.transform.translation.z = 0.0
+        ox_base = self.odom_base_x if self.odom_base_x is not None else 0.0
+        oy_base = self.odom_base_y if self.odom_base_y is not None else 0.0
+        oyaw_base = self.odom_base_yaw if self.odom_base_yaw is not None else 0.0
 
-            map_odom_yaw = self.initial_map_yaw - oyaw_base
-            cy = math.cos(map_odom_yaw * 0.5)
-            sy = math.sin(map_odom_yaw * 0.5)
-            t.transform.rotation.x = 0.0
-            t.transform.rotation.y = 0.0
-            t.transform.rotation.z = float(sy)
-            t.transform.rotation.w = float(cy)
-            self.tf_broadcaster.sendTransform(t)
+        t = TransformStamped()
+        t.header.stamp = self.get_clock().now().to_msg()
+        t.header.frame_id = 'map'
+        t.child_frame_id = 'odom'
 
-        if self.latest_drive_msg is not None:
-            msg = AckermannDriveStamped()
-            msg.header.stamp = self.get_clock().now().to_msg()
-            msg.header.frame_id = ''
-            msg.drive.speed = float(self.latest_drive_msg.drive.speed)
-            msg.drive.steering_angle = float(self.latest_drive_msg.drive.steering_angle)
-            self.drive_pub.publish(msg)
+        map_odom_yaw = self.initial_map_yaw - oyaw_base
+        c = math.cos(map_odom_yaw)
+        s = math.sin(map_odom_yaw)
+        t.transform.translation.x = float(self.initial_map_x - (c * ox_base - s * oy_base))
+        t.transform.translation.y = float(self.initial_map_y - (s * ox_base + c * oy_base))
+        t.transform.translation.z = 0.0
+
+        cy = math.cos(map_odom_yaw * 0.5)
+        sy = math.sin(map_odom_yaw * 0.5)
+        t.transform.rotation.x = 0.0
+        t.transform.rotation.y = 0.0
+        t.transform.rotation.z = float(sy)
+        t.transform.rotation.w = float(cy)
+        self.tf_broadcaster.sendTransform(t)
 
     def _scan_callback(self, msg: LaserScan):
         pass
 
     def _amcl_pose_callback(self, msg: PoseWithCovarianceStamped):
-        self.pose_x = msg.pose.pose.position.x
-        self.pose_y = msg.pose.pose.position.y
+        x = msg.pose.pose.position.x
+        y = msg.pose.pose.position.y
         q = msg.pose.pose.orientation
-        self.pose_theta = quat_to_yaw(q.x, q.y, q.z, q.w)
-        self.initial_map_x = self.pose_x
-        self.initial_map_y = self.pose_y
-        self.initial_map_yaw = self.pose_theta
+        theta = quat_to_yaw(q.x, q.y, q.z, q.w)
+        self.pose_x = x
+        self.pose_y = y
+        self.pose_theta = theta
+        self.initial_map_x = x
+        self.initial_map_y = y
+        self.initial_map_yaw = theta
         self.odom_base_x = None
         self.amcl_received = True
         self.get_logger().info(
-            f'Received Initial Pose from RViz2: x={self.pose_x:.2f}, y={self.pose_y:.2f}, yaw={self.pose_theta:.2f}',
+            f'Received Initial Pose from RViz2: x={x:.2f}, y={y:.2f}, yaw={theta:.2f}',
             throttle_duration_sec=2.0
         )
 
     def _odom_velocity_callback(self, msg: Odometry):
-        self.velocity = msg.twist.twist.linear.x
+        v = msg.twist.twist.linear.x
+        self.velocity = v
         self.odom_received = True
         self.get_logger().info(
-            f'Received Odom velocity: {self.velocity:.2f} m/s',
+            f'Received Odom velocity: {v:.2f} m/s',
             throttle_duration_sec=5.0
         )
 
     def _amcl_pose_fusion_callback(self, msg: PoseWithCovarianceStamped):
-        self.pose_x = msg.pose.pose.position.x
-        self.pose_y = msg.pose.pose.position.y
+        x = msg.pose.pose.position.x
+        y = msg.pose.pose.position.y
         q = msg.pose.pose.orientation
-        self.pose_theta = quat_to_yaw(q.x, q.y, q.z, q.w)
+        theta = quat_to_yaw(q.x, q.y, q.z, q.w)
+        self.pose_x = x
+        self.pose_y = y
+        self.pose_theta = theta
         self.amcl_received = True
         self.last_odom_x = None
         self.last_odom_y = None
         self.last_odom_yaw = None
 
     def _odom_fusion_callback(self, msg: Odometry):
-        self.velocity = msg.twist.twist.linear.x
-        self.odom_received = True
-
+        v = msg.twist.twist.linear.x
         ox = msg.pose.pose.position.x
         oy = msg.pose.pose.position.y
         q = msg.pose.pose.orientation
         oyaw = quat_to_yaw(q.x, q.y, q.z, q.w)
+
+        self.velocity = v
+        self.odom_received = True
 
         if self.last_odom_x is not None:
             dx_odom = ox - self.last_odom_x
@@ -282,16 +283,17 @@ class SlamLatticePlannerNode(Node):
         self.last_odom_yaw = oyaw
 
     def _odom_full_callback(self, msg: Odometry):
-        self.velocity = msg.twist.twist.linear.x
-        self.odom_received = True
-
-        if not self.amcl_received:
-            return
-
+        v = msg.twist.twist.linear.x
         ox = msg.pose.pose.position.x
         oy = msg.pose.pose.position.y
         q = msg.pose.pose.orientation
         oyaw = quat_to_yaw(q.x, q.y, q.z, q.w)
+
+        self.velocity = v
+        self.odom_received = True
+
+        if not self.amcl_received:
+            return
 
         if self.odom_base_x is None:
             self.odom_base_x = ox
@@ -302,11 +304,15 @@ class SlamLatticePlannerNode(Node):
         dy = oy - self.odom_base_y
         dyaw = oyaw - self.odom_base_yaw
 
-        c = math.cos(self.initial_map_yaw)
-        s = math.sin(self.initial_map_yaw)
+        delta_yaw = self.initial_map_yaw - self.odom_base_yaw
+        c = math.cos(delta_yaw)
+        s = math.sin(delta_yaw)
         self.pose_x = self.initial_map_x + (c * dx - s * dy)
         self.pose_y = self.initial_map_y + (s * dx + c * dy)
-        self.pose_theta = self.initial_map_yaw + dyaw
+        self.pose_theta = math.atan2(
+            math.sin(self.initial_map_yaw + dyaw),
+            math.cos(self.initial_map_yaw + dyaw)
+        )
 
     def _plan_callback(self):
         if not self.amcl_received:
@@ -321,39 +327,34 @@ class SlamLatticePlannerNode(Node):
                 self.pose_x, self.pose_y, self.pose_theta,
                 self.opp_pose, self.velocity
             )
-            self.best_traj = best_traj
         except Exception as e:
             self.get_logger().warn(f'Lattice plan failed: {e}', throttle_duration_sec=2.0)
             return
 
-        if self.best_traj is not None:
-            steering, speed = self.planner.tracker.plan(
-                self.pose_x, self.pose_y, self.pose_theta,
-                self.velocity, self.best_traj
-            )
-
-            steer_diff = steering - self.last_steer
-            steer_diff = max(min(steer_diff, self.max_steer_rate), -self.max_steer_rate)
-            steering = self.last_steer + steer_diff
-            self.last_steer = steering
-
-            steering = float(np.clip(steering, -self.max_steer, self.max_steer))
-            speed = float(np.clip(speed, 0.0, self.max_speed))
+        if best_traj is not None:
+            self.best_traj = best_traj
+            now = self.get_clock().now().to_msg()
+            self._publish_trajectory(best_traj)
+            self._publish_best_traj(best_traj, now)
 
             self.get_logger().info(
-                f'Planning active: pose=({self.pose_x:.2f}, {self.pose_y:.2f}), steer={steering:.3f}rad, speed={speed:.2f}m/s',
+                f'Plan generated: pose=({self.pose_x:.2f}, {self.pose_y:.2f}), points={len(best_traj)}, cost={best_cost:.2f}',
                 throttle_duration_sec=2.0
             )
 
-            drive_msg = AckermannDriveStamped()
-            drive_msg.header.stamp = self.get_clock().now().to_msg()
-            drive_msg.header.frame_id = ''
-            drive_msg.drive.speed = speed
-            drive_msg.drive.steering_angle = steering
-            self.latest_drive_msg = drive_msg
-
-            now = self.get_clock().now().to_msg()
-            self._publish_best_traj(self.best_traj, now)
+    def _publish_trajectory(self, best_traj):
+        trajectory = np.ascontiguousarray(best_traj[:, :3], dtype=np.float64)
+        msg = Float64MultiArray()
+        msg.layout.dim = [
+            MultiArrayDimension(
+                label='points',
+                size=trajectory.shape[0],
+                stride=trajectory.size,
+            ),
+            MultiArrayDimension(label='xyv', size=3, stride=3),
+        ]
+        msg.data = trajectory.reshape(-1).tolist()
+        self.trajectory_pub.publish(msg)
 
     def _publish_raceline_vis(self):
         waypoints = self.planner.waypoints
@@ -395,7 +396,7 @@ class SlamLatticePlannerNode(Node):
         marker.type = Marker.LINE_STRIP
         marker.action = Marker.ADD
         marker.scale.x = 0.08
-        # 소프트 엘로우 / 골드 (선명하지만 눈이 아프지 않은 색상)
+        # 소프트 엘로우 / 골드
         marker.color = ColorRGBA(r=1.0, g=0.85, b=0.1, a=0.95)
         marker.pose.orientation.w = 1.0
 
