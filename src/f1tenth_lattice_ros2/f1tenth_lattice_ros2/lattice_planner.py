@@ -8,6 +8,7 @@ from numba import njit
 from scipy.ndimage import distance_transform_edt as edt
 from pyclothoids import Clothoid
 
+import multiprocessing
 from f1tenth_lattice_ros2.planner_utils import (
     nearest_point, intersect_point, get_rotation_matrix,
     zero_2_2pi, sample_traj, map_collision, get_vertices, collision,
@@ -15,6 +16,16 @@ from f1tenth_lattice_ros2.planner_utils import (
 from f1tenth_lattice_ros2.pure_pursuit import PurePursuitPlanner
 
 logger = logging.getLogger(__name__)
+
+
+def _compute_clothoid_chunk(args):
+    pose_x, pose_y, pose_theta, npts, chunk = args
+    results = []
+    for pt in chunk:
+        c = Clothoid.G1Hermite(pose_x, pose_y, pose_theta, pt[0], pt[1], pt[2])
+        traj = sample_traj(c, npts, pt[3])
+        results.append((traj, np.array(c.Parameters)))
+    return results
 
 
 class LatticePlanner:
@@ -137,6 +148,15 @@ class LatticePlanner:
                     f'desired_gap={self.follow_desired_gap}m, max_speed={self.follow_max_speed}m/s'
                 )
 
+        # Multi-core process pool for parallel Clothoid generation
+        self.num_workers = min(multiprocessing.cpu_count(), 4)
+        self.pool = multiprocessing.Pool(processes=self.num_workers)
+
+    def __del__(self):
+        if hasattr(self, 'pool') and self.pool is not None:
+            self.pool.terminate()
+            self.pool.join()
+
     def set_cost_weights(self, cost_weights):
         if isinstance(cost_weights, int):
             n = cost_weights
@@ -173,15 +193,16 @@ class LatticePlanner:
         )
 
         _t_clothoid0 = time.perf_counter()
+        chunks = np.array_split(self.goal_grid, self.num_workers)
+        tasks = [(pose_x, pose_y, pose_theta, self.traj_points, chunk) for chunk in chunks if len(chunk) > 0]
+        chunk_results = self.pool.map(_compute_clothoid_chunk, tasks)
+
         all_traj = []
         all_traj_clothoid = []
-        for point in self.goal_grid:
-            clothoid = Clothoid.G1Hermite(
-                pose_x, pose_y, pose_theta, point[0], point[1], point[2]
-            )
-            traj = sample_traj(clothoid, self.traj_points, point[3])
-            all_traj.append(traj)
-            all_traj_clothoid.append(np.array(clothoid.Parameters))
+        for res in chunk_results:
+            for traj, clothoid_params in res:
+                all_traj.append(traj)
+                all_traj_clothoid.append(clothoid_params)
 
         all_traj = np.array(all_traj)
         all_traj_clothoid = np.array(all_traj_clothoid)
@@ -412,13 +433,16 @@ def get_map_collision(traj, traj_clothoid, opp_poses=None, ego_pose=None,
 @njit(cache=True)
 def get_obstacle_collision_with_v(traj, traj_clothoid, v_lattice, opp_poses,
                                    prev_oppo_pose, dt=None):
+    n, m, _ = traj.shape
+    k = v_lattice.shape[1]
+    if opp_poses.shape[0] == 0:
+        return np.zeros((n, k))
+
     max_cost = 20.0
     min_cost = 10.0
     width, length = 0.31, 0.58
     safety_width_distance = 0.15
     safety_length_distance = 0.2
-    n, m, _ = traj.shape
-    k = v_lattice.shape[1]
 
     traj_xyt = np.empty((traj.shape[0], traj.shape[1], 3), dtype=traj.dtype)
     traj_xyt[:, :, 0] = traj[:, :, 0]
