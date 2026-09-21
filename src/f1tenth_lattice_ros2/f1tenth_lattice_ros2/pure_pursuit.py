@@ -43,8 +43,15 @@ class PurePursuitPlanner:
         return curr_v * (self.maxL - self.minL) / self.Lscale + self.minL
 
     def plan(self, pose_x, pose_y, pose_theta, curr_v, waypoints):
-        L = curr_v * (self.maxL - self.minL) / self.Lscale + self.minL
-        L = max(L, self.minL)
+        base_L = curr_v * (self.maxL - self.minL) / self.Lscale + self.minL
+        base_L = max(base_L, self.minL)
+
+        # Adaptive Lookahead: 코너링(조향각)에 따라 lookahead를 적응형 단축
+        # 직선(|prev_error| ~ 0): 원래 속도 연동 L 유지 (1.1 ~ 1.4m) -> 고속 직선 흔들림 방지
+        # 코너(|prev_error| 커질수록): L을 최대 35%까지 단축 -> 코너 호(arc)를 타이트하게 물고 탈출
+        steer_factor = 1.0 / (1.0 + 1.8 * abs(self.prev_error))
+        L = max(base_L * steer_factor, 0.65)
+
         P = self.maxP - curr_v * (self.maxP - self.minP) / self.Pscale
         P = max(min(P, self.maxP), self.minP)
 
@@ -55,7 +62,7 @@ class PurePursuitPlanner:
         self.nearest_dist = nearest_dist
 
         speed, steering, error = get_actuation_PD(
-            pose_theta, lookahead_point, position, new_L, self.wheelbase, self.prev_error, P, self.D
+            pose_theta, lookahead_point, position, new_L, self.wheelbase, self.prev_error, P, self.D, 0.25
         )
         speed = speed * self.vel_scale
         self.prev_error = error
@@ -89,4 +96,12 @@ def get_wp_xyv_with_interp(L, curr_pos, theta, waypoints, wpNum, interpScale):
     i_interp = np.argmin(np.abs(dist_interp))
     target_global = np.array((x_array[i_interp], y_array[i_interp]))
     new_L = np.linalg.norm(curr_pos - target_global)
-    return np.array((x_array[i_interp], y_array[i_interp], v_array[i_interp])), new_L, nearest_dist
+
+    dx = waypoints[segment_end, 0] - waypoints[segment_begin, 0]
+    dy = waypoints[segment_end, 1] - waypoints[segment_begin, 1]
+    if np.abs(dx) < 1e-6 and np.abs(dy) < 1e-6:
+        target_heading = theta
+    else:
+        target_heading = np.arctan2(dy, dx)
+
+    return np.array((x_array[i_interp], y_array[i_interp], v_array[i_interp], target_heading)), new_L, nearest_dist

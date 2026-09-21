@@ -306,19 +306,28 @@ def collision(vertices1, vertices2):
 
 
 @njit(cache=True)
-def get_actuation_PD(pose_theta, lookahead_point, position, lookahead_distance, wheelbase, prev_error, P, D):
+def get_actuation_PD(pose_theta, lookahead_point, position, lookahead_distance, wheelbase, prev_error, P, D, k_heading=0.25):
     waypoint_y = np.dot(np.array([np.sin(-pose_theta), np.cos(-pose_theta)]), lookahead_point[0:2] - position)
     speed = lookahead_point[2]
-    curvature = 2.0 * waypoint_y / lookahead_distance ** 2
-    if np.abs(waypoint_y) < 1e-4:
-        return speed, 0., curvature
+    curvature = 2.0 * waypoint_y / max(lookahead_distance ** 2, 0.01)
     
     # Kinematic steering angle for Ackermann vehicle
     kinematic_steer = np.arctan(wheelbase * curvature)
     
-    # P and D gains apply to the kinematic steering angle
-    steering_angle = P * kinematic_steer + D * (kinematic_steer - prev_error)
-    return speed, steering_angle, kinematic_steer
+    # Heading error alignment compensation (prevents early steering unwinding on corner exit)
+    if lookahead_point.shape[0] > 3:
+        target_heading = lookahead_point[3]
+        heading_err = target_heading - pose_theta
+        while heading_err > math.pi:
+            heading_err -= 2.0 * math.pi
+        while heading_err < -math.pi:
+            heading_err += 2.0 * math.pi
+    else:
+        heading_err = 0.0
+
+    target_steer = kinematic_steer + k_heading * heading_err
+    steering_angle = P * target_steer + D * (target_steer - prev_error)
+    return speed, steering_angle, target_steer
 
 
 def load_config(config_path, namespace=None):

@@ -112,6 +112,10 @@ class SlamLatticePlannerNode(Node):
         self.last_odom_x = None
         self.last_odom_y = None
         self.last_odom_yaw = None
+        self.map_to_odom_transform = None
+        self.last_raw_odom_x = 0.0
+        self.last_raw_odom_y = 0.0
+        self.last_raw_odom_yaw = 0.0
 
         self.opp_pose = np.empty((0, 3))
         self.best_traj = None
@@ -148,10 +152,7 @@ class SlamLatticePlannerNode(Node):
         else:
             self.get_logger().info('Localization mode: ODOMETRY ONLY (Initial pose from 2D Pose Estimate + Odom updates)')
             self.create_subscription(
-                PoseWithCovarianceStamped, 'amcl_pose', self._amcl_pose_callback, qos
-            )
-            self.create_subscription(
-                PoseWithCovarianceStamped, 'initialpose', self._amcl_pose_callback, qos
+                PoseWithCovarianceStamped, 'initialpose', self._initialpose_callback, qos
             )
             self.create_subscription(
                 Odometry, 'odom', self._odom_full_callback, qos
@@ -186,27 +187,22 @@ class SlamLatticePlannerNode(Node):
         )
 
     def _publish_tf_timer(self):
-        if not self.amcl_received:
+        if not self.amcl_received or self.map_to_odom_transform is None:
             return
 
-        ox_base = self.odom_base_x if self.odom_base_x is not None else 0.0
-        oy_base = self.odom_base_y if self.odom_base_y is not None else 0.0
-        oyaw_base = self.odom_base_yaw if self.odom_base_yaw is not None else 0.0
+        tx, ty, rel_yaw = self.map_to_odom_transform
 
         t = TransformStamped()
         t.header.stamp = self.get_clock().now().to_msg()
         t.header.frame_id = 'map'
         t.child_frame_id = 'odom'
 
-        map_odom_yaw = self.initial_map_yaw - oyaw_base
-        c = math.cos(map_odom_yaw)
-        s = math.sin(map_odom_yaw)
-        t.transform.translation.x = float(self.initial_map_x - (c * ox_base - s * oy_base))
-        t.transform.translation.y = float(self.initial_map_y - (s * ox_base + c * oy_base))
+        t.transform.translation.x = float(tx)
+        t.transform.translation.y = float(ty)
         t.transform.translation.z = 0.0
 
-        cy = math.cos(map_odom_yaw * 0.5)
-        sy = math.sin(map_odom_yaw * 0.5)
+        cy = math.cos(rel_yaw * 0.5)
+        sy = math.sin(rel_yaw * 0.5)
         t.transform.rotation.x = 0.0
         t.transform.rotation.y = 0.0
         t.transform.rotation.z = float(sy)
@@ -232,6 +228,35 @@ class SlamLatticePlannerNode(Node):
         self.get_logger().info(
             f'Received Initial Pose from RViz2: x={x:.2f}, y={y:.2f}, yaw={theta:.2f}',
             throttle_duration_sec=2.0
+        )
+
+    def _initialpose_callback(self, msg: PoseWithCovarianceStamped):
+        self.initial_map_x = msg.pose.pose.position.x
+        self.initial_map_y = msg.pose.pose.position.y
+        q = msg.pose.pose.orientation
+        self.initial_map_yaw = quat_to_yaw(q.x, q.y, q.z, q.w)
+
+        # RViz2에서 클릭한 시점의 odom 값을 기준점으로 고정
+        self.odom_base_x = self.last_raw_odom_x
+        self.odom_base_y = self.last_raw_odom_y
+        self.odom_base_yaw = self.last_raw_odom_yaw
+
+        # SE(2) 변환: T_map_odom = T_map_base * (T_odom_base)^(-1)
+        rel_yaw = self.initial_map_yaw - self.odom_base_yaw
+        c = math.cos(rel_yaw)
+        s = math.sin(rel_yaw)
+        tx = self.initial_map_x - (c * self.odom_base_x - s * self.odom_base_y)
+        ty = self.initial_map_y - (s * self.odom_base_x + c * self.odom_base_y)
+        self.map_to_odom_transform = (tx, ty, rel_yaw)
+
+        self.pose_x = self.initial_map_x
+        self.pose_y = self.initial_map_y
+        self.pose_theta = self.initial_map_yaw
+        self.amcl_received = True
+
+        self.get_logger().info(
+            f'Odom mode Initial Pose set: map=({self.initial_map_x:.2f}, {self.initial_map_y:.2f}, {math.degrees(self.initial_map_yaw):.1f} deg), '
+            f'odom_base=({self.odom_base_x:.2f}, {self.odom_base_y:.2f}, {math.degrees(self.odom_base_yaw):.1f} deg)'
         )
 
     def _odom_velocity_callback(self, msg: Odometry):
@@ -283,36 +308,31 @@ class SlamLatticePlannerNode(Node):
         self.last_odom_yaw = oyaw
 
     def _odom_full_callback(self, msg: Odometry):
-        v = msg.twist.twist.linear.x
+        self.velocity = msg.twist.twist.linear.x
+        self.odom_received = True
+
         ox = msg.pose.pose.position.x
         oy = msg.pose.pose.position.y
         q = msg.pose.pose.orientation
         oyaw = quat_to_yaw(q.x, q.y, q.z, q.w)
 
-        self.velocity = v
-        self.odom_received = True
+        self.last_raw_odom_x = ox
+        self.last_raw_odom_y = oy
+        self.last_raw_odom_yaw = oyaw
 
-        if not self.amcl_received:
+        if not self.amcl_received or self.odom_base_x is None:
             return
 
-        if self.odom_base_x is None:
-            self.odom_base_x = ox
-            self.odom_base_y = oy
-            self.odom_base_yaw = oyaw
-
+        rel_yaw = self.initial_map_yaw - self.odom_base_yaw
         dx = ox - self.odom_base_x
         dy = oy - self.odom_base_y
-        dyaw = oyaw - self.odom_base_yaw
+        c = math.cos(rel_yaw)
+        s = math.sin(rel_yaw)
 
-        delta_yaw = self.initial_map_yaw - self.odom_base_yaw
-        c = math.cos(delta_yaw)
-        s = math.sin(delta_yaw)
         self.pose_x = self.initial_map_x + (c * dx - s * dy)
         self.pose_y = self.initial_map_y + (s * dx + c * dy)
-        self.pose_theta = math.atan2(
-            math.sin(self.initial_map_yaw + dyaw),
-            math.cos(self.initial_map_yaw + dyaw)
-        )
+        cur_yaw = self.initial_map_yaw + (oyaw - self.odom_base_yaw)
+        self.pose_theta = math.atan2(math.sin(cur_yaw), math.cos(cur_yaw))
 
     def _plan_callback(self):
         if not self.amcl_received:

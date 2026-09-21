@@ -84,6 +84,9 @@ class SlamPurePursuitControllerNode(Node):
         self.last_odom_x = None
         self.last_odom_y = None
         self.last_odom_yaw = None
+        self.last_raw_odom_x = 0.0
+        self.last_raw_odom_y = 0.0
+        self.last_raw_odom_yaw = 0.0
 
         self.last_steer = 0.0
         self.best_traj = None
@@ -127,10 +130,7 @@ class SlamPurePursuitControllerNode(Node):
             )
         else:  # odom mode
             self.create_subscription(
-                PoseWithCovarianceStamped, 'amcl_pose', self._amcl_pose_callback, qos
-            )
-            self.create_subscription(
-                PoseWithCovarianceStamped, 'initialpose', self._amcl_pose_callback, qos
+                PoseWithCovarianceStamped, 'initialpose', self._initialpose_callback, qos
             )
 
         # Odometry state update subscription
@@ -194,6 +194,27 @@ class SlamPurePursuitControllerNode(Node):
         self.last_odom_y = None
         self.last_odom_yaw = None
 
+    def _initialpose_callback(self, msg: PoseWithCovarianceStamped):
+        self.initial_map_x = msg.pose.pose.position.x
+        self.initial_map_y = msg.pose.pose.position.y
+        q = msg.pose.pose.orientation
+        self.initial_map_yaw = quat_to_yaw(q.x, q.y, q.z, q.w)
+
+        # RViz2에서 클릭한 시점의 odom 값을 기준점으로 고정
+        self.odom_base_x = self.last_raw_odom_x
+        self.odom_base_y = self.last_raw_odom_y
+        self.odom_base_yaw = self.last_raw_odom_yaw
+
+        self.pose_x = self.initial_map_x
+        self.pose_y = self.initial_map_y
+        self.pose_theta = self.initial_map_yaw
+        self.amcl_received = True
+
+        self.get_logger().info(
+            f'Controller Odom mode Initial Pose set: map=({self.initial_map_x:.2f}, {self.initial_map_y:.2f}, {math.degrees(self.initial_map_yaw):.1f} deg), '
+            f'odom_base=({self.odom_base_x:.2f}, {self.odom_base_y:.2f}, {math.degrees(self.odom_base_yaw):.1f} deg)'
+        )
+
     def _odom_callback(self, msg: Odometry):
         v = msg.twist.twist.linear.x
         self.velocity = v
@@ -203,6 +224,10 @@ class SlamPurePursuitControllerNode(Node):
         oy = msg.pose.pose.position.y
         q = msg.pose.pose.orientation
         oyaw = quat_to_yaw(q.x, q.y, q.z, q.w)
+
+        self.last_raw_odom_x = ox
+        self.last_raw_odom_y = oy
+        self.last_raw_odom_yaw = oyaw
 
         # Odom Dead-Reckoning update to bridge inter-AMCL updates
         if self.loc_mode in ['scan', 'amcl', 'fusion']:
@@ -222,26 +247,19 @@ class SlamPurePursuitControllerNode(Node):
             self.last_odom_y = oy
             self.last_odom_yaw = oyaw
         else:  # odom mode
-            if not self.amcl_received:
+            if not self.amcl_received or self.odom_base_x is None:
                 return
-            if self.odom_base_x is None:
-                self.odom_base_x = ox
-                self.odom_base_y = oy
-                self.odom_base_yaw = oyaw
 
+            rel_yaw = self.initial_map_yaw - self.odom_base_yaw
             dx = ox - self.odom_base_x
             dy = oy - self.odom_base_y
-            dyaw = oyaw - self.odom_base_yaw
+            c = math.cos(rel_yaw)
+            s = math.sin(rel_yaw)
 
-            delta_yaw = self.initial_map_yaw - self.odom_base_yaw
-            c = math.cos(delta_yaw)
-            s = math.sin(delta_yaw)
             self.pose_x = self.initial_map_x + (c * dx - s * dy)
             self.pose_y = self.initial_map_y + (s * dx + c * dy)
-            self.pose_theta = math.atan2(
-                math.sin(self.initial_map_yaw + dyaw),
-                math.cos(self.initial_map_yaw + dyaw)
-            )
+            cur_yaw = self.initial_map_yaw + (oyaw - self.odom_base_yaw)
+            self.pose_theta = math.atan2(math.sin(cur_yaw), math.cos(cur_yaw))
 
     def _control_timer_callback(self):
         trajectory = self.best_traj

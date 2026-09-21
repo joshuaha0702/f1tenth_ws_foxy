@@ -16,13 +16,13 @@ params_name:
 tracker_steps: 10
 vel_scale: 1.0
 
-minL: 0.2
-maxL: 1.8
-Lscale: 8.0
-minP: 0.5
-maxP: 0.8
+minL: 0.8
+maxL: 2.0
+Lscale: 4.0
+minP: 0.4
+maxP: 0.7
 Pscale: 8.0
-D: 0.2
+D: 0.1
 interpScale: 10
 
 wpt_xind: 0
@@ -31,7 +31,7 @@ wpt_vind: 2
 
 # === Ego vehicle (실차 안정성 강화) ===
 car1:
-  lh_grid_lb: -0.5
+  lh_grid_lb: -0.3
   lh_grid_ub: 0.5
   traj_points: 12
   traj_v_scale: 1.0
@@ -44,18 +44,17 @@ car1:
     y: 16.0
     yaw_deg: -90.0
 
-  # [대조군 파라미터 적용: car2 동일 설정]
-  # [Follow, Map Collision, Path Similarity/Heading, Opponent]
+  # [Follow, Map Collision, Curvature Penalty, Opponent]
   cost_weights:
-    - 2.0
+    - 0.4
     - 0.5
-    - 0.003
+    - 0.05
     - 0.0
-  minL: 0.2
-  maxL: 1.8
-  Lscale: 8.0
-  minP: 0.5
-  maxP: 0.8
+  minL: 0.8
+  maxL: 2.0
+  Lscale: 4.0
+  minP: 0.4
+  maxP: 0.7
 
   # === 선두 차량 추종(following) 모드 ===
   follow:

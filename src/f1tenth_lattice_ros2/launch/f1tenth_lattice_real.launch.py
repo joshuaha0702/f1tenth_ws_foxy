@@ -2,7 +2,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess, RegisterEventHandler, TimerAction
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.event_handlers import OnProcessStart
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
@@ -83,17 +83,21 @@ def generate_launch_description():
         }]
     )
 
-    # 2. Nav2 AMCL Node (파티클 필터 위치 추정)
+    # AMCL 비활성화 조건 (odom 모드일 때는 AMCL을 띄우지 않음)
+    is_odom_mode = PythonExpression(["'", loc_mode, "' == 'odom'"])
+
+    # 2. Nav2 AMCL Node (파티클 필터 위치 추정 - odom 모드가 아닐 때만 실행)
     amcl_node = Node(
         package='nav2_amcl',
         executable='amcl',
         name='amcl',
         output='screen',
-        parameters=[amcl_config_path]
+        parameters=[amcl_config_path],
+        condition=UnlessCondition(is_odom_mode)
     )
 
-    # 3. Lifecycle Manager (Map Server와 AMCL 자동 활성화)
-    lifecycle_manager_node = Node(
+    # 3. Lifecycle Manager (odom 모드일 때는 map_server만, 아닐 때는 map_server + amcl 활성화)
+    lifecycle_manager_node_amcl = Node(
         package='nav2_lifecycle_manager',
         executable='lifecycle_manager',
         name='lifecycle_manager_localization',
@@ -102,7 +106,21 @@ def generate_launch_description():
             'use_sim_time': False,
             'autostart': True,
             'node_names': ['map_server', 'amcl']
-        }]
+        }],
+        condition=UnlessCondition(is_odom_mode)
+    )
+
+    lifecycle_manager_node_odom = Node(
+        package='nav2_lifecycle_manager',
+        executable='lifecycle_manager',
+        name='lifecycle_manager_localization',
+        output='screen',
+        parameters=[{
+            'use_sim_time': False,
+            'autostart': True,
+            'node_names': ['map_server']
+        }],
+        condition=IfCondition(is_odom_mode)
     )
 
     use_global_loc_arg = DeclareLaunchArgument(
@@ -112,7 +130,7 @@ def generate_launch_description():
     )
     use_global_loc = LaunchConfiguration('use_global_loc')
 
-    # 4. Global Localization Automatic Trigger (선택적 자동 위치 무작위 리셋)
+    # 4. Global Localization Automatic Trigger (선택적 자동 위치 무작위 리셋 - odom 모드 아닐 때만)
     trigger_global_loc = ExecuteProcess(
         cmd=['ros2', 'service', 'call', '/reinitialize_global_localization', 'std_srvs/srv/Empty'],
         output='screen',
@@ -121,7 +139,8 @@ def generate_launch_description():
 
     delay_global_loc = TimerAction(
         period=2.0,
-        actions=[trigger_global_loc]
+        actions=[trigger_global_loc],
+        condition=UnlessCondition(is_odom_mode)
     )
 
     # 5. SLAM Lattice Planner Node (주행 플래너 - planned_trajectory 발행)
@@ -199,7 +218,8 @@ def generate_launch_description():
         record_bag_arg,
         map_server_node,
         amcl_node,
-        lifecycle_manager_node,
+        lifecycle_manager_node_amcl,
+        lifecycle_manager_node_odom,
         delay_global_loc,
         lattice_planner_node,
         pure_pursuit_controller_node,
