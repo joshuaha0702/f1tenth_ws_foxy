@@ -1,3 +1,9 @@
+# === 실차(SLAM/AMCL) 전용 설정 ===
+# f1tenth_lattice_real.launch.py 의 기본 config. 실차 안정성 기준으로 튜닝돼 있다
+# (상대차 회피 가중치 0.0, lh_grid 축소, lookahead 확대, 조향 보강 ON).
+# 시뮬레이션 데이터 수집에는 쓰지 말 것 — 시뮬 기본 config는 sim_lattice_config.yaml 이며
+# f1tenth_lattice_gazebo.launch.py 가 그 파일을 기본으로 읽는다.
+
 # === Global defaults ===
 get_follow_optim_cost: true
 get_map_collision: true
@@ -24,6 +30,12 @@ maxP: 0.7
 Pscale: 8.0
 D: 0.1
 interpScale: 10
+
+# 실차 추종 보강 (pure_pursuit.py, opt-in; 생략 시 모두 꺼짐 = 시뮬 수집 당시 동작)
+adaptive_lookahead: true        # 조향각에 따라 lookahead 단축 (코너 탈출 개선)
+adaptive_lookahead_gain: 1.8    # steer_factor = 1 / (1 + gain*|steer|)
+adaptive_lookahead_min: 0.65    # 단축 하한 [m]
+k_heading: 0.25                 # heading error 보정 게인 (코너 탈출 시 조기 복원 방지)
 
 wpt_xind: 0
 wpt_yind: 1

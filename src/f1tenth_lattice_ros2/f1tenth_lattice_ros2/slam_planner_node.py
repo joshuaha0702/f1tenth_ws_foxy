@@ -119,6 +119,10 @@ class SlamLatticePlannerNode(Node):
 
         self.opp_pose = np.empty((0, 3))
         self.best_traj = None
+        # 계획이 연속으로 이만큼 실패하면 빈 planned_trajectory를 보내 컨트롤러를 즉시 멈춘다
+        # (컨트롤러의 trajectory_timeout 보다 먼저, 그리고 명시적으로).
+        self.plan_fail_count = 0
+        self.plan_fail_stop_threshold = 3
 
         qos = QoSProfile(depth=10)
         marker_qos = QoSProfile(
@@ -349,9 +353,13 @@ class SlamLatticePlannerNode(Node):
             )
         except Exception as e:
             self.get_logger().warn(f'Lattice plan failed: {e}', throttle_duration_sec=2.0)
+            self._on_plan_failure()
             return
 
-        if best_traj is not None:
+        if best_traj is None:
+            self._on_plan_failure()
+        else:
+            self.plan_fail_count = 0
             self.best_traj = best_traj
             now = self.get_clock().now().to_msg()
             self._publish_trajectory(best_traj)
@@ -361,6 +369,17 @@ class SlamLatticePlannerNode(Node):
                 f'Plan generated: pose=({self.pose_x:.2f}, {self.pose_y:.2f}), points={len(best_traj)}, cost={best_cost:.2f}',
                 throttle_duration_sec=2.0
             )
+
+    def _on_plan_failure(self):
+        self.plan_fail_count += 1
+        if self.plan_fail_count == self.plan_fail_stop_threshold:
+            self.get_logger().error(
+                f'Lattice plan failed {self.plan_fail_count} times in a row; '
+                f'publishing empty trajectory so the controller stops'
+            )
+        if self.plan_fail_count >= self.plan_fail_stop_threshold:
+            self.best_traj = None
+            self.trajectory_pub.publish(Float64MultiArray())
 
     def _publish_trajectory(self, best_traj):
         trajectory = np.ascontiguousarray(best_traj[:, :3], dtype=np.float64)

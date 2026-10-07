@@ -306,7 +306,7 @@ def collision(vertices1, vertices2):
 
 
 @njit(cache=True)
-def get_actuation_PD(pose_theta, lookahead_point, position, lookahead_distance, wheelbase, prev_error, P, D, k_heading=0.25):
+def get_actuation_PD(pose_theta, lookahead_point, position, lookahead_distance, wheelbase, prev_error, P, D, k_heading=0.0):
     waypoint_y = np.dot(np.array([np.sin(-pose_theta), np.cos(-pose_theta)]), lookahead_point[0:2] - position)
     speed = lookahead_point[2]
     curvature = 2.0 * waypoint_y / max(lookahead_distance ** 2, 0.01)

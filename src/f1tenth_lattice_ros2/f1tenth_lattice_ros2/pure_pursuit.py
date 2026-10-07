@@ -30,6 +30,14 @@ class PurePursuitPlanner:
         self.vel_scale = conf.vel_scale
         self.interpScale = conf.interpScale
 
+        # 실차용 추종 보강(opt-in). 기본값은 꺼짐 = 시뮬 데이터 수집 당시의 추종 동작.
+        # 시뮬 config(sim_lattice_config.yaml, maps/*/lattice_config.yaml)는 키를 생략해 기존
+        # 라벨 정책을 유지하고, 실차 lattice_config.yaml만 명시적으로 켠다.
+        self.adaptive_lookahead = bool(getattr(conf, 'adaptive_lookahead', False))
+        self.adaptive_lookahead_gain = float(getattr(conf, 'adaptive_lookahead_gain', 1.8))
+        self.adaptive_lookahead_min = float(getattr(conf, 'adaptive_lookahead_min', 0.65))
+        self.k_heading = float(getattr(conf, 'k_heading', 0.0))
+
     def _load_waypoints(self, wpt_path):
         # raceline CSV: s_m; x_m; y_m; psi_rad; kappa_radpm; vx_mps; ax_mps2
         raw = np.loadtxt(wpt_path, delimiter=';', skiprows=2)
@@ -43,14 +51,15 @@ class PurePursuitPlanner:
         return curr_v * (self.maxL - self.minL) / self.Lscale + self.minL
 
     def plan(self, pose_x, pose_y, pose_theta, curr_v, waypoints):
-        base_L = curr_v * (self.maxL - self.minL) / self.Lscale + self.minL
-        base_L = max(base_L, self.minL)
+        L = curr_v * (self.maxL - self.minL) / self.Lscale + self.minL
+        L = max(L, self.minL)
 
-        # Adaptive Lookahead: 코너링(조향각)에 따라 lookahead를 적응형 단축
-        # 직선(|prev_error| ~ 0): 원래 속도 연동 L 유지 (1.1 ~ 1.4m) -> 고속 직선 흔들림 방지
-        # 코너(|prev_error| 커질수록): L을 최대 35%까지 단축 -> 코너 호(arc)를 타이트하게 물고 탈출
-        steer_factor = 1.0 / (1.0 + 1.8 * abs(self.prev_error))
-        L = max(base_L * steer_factor, 0.65)
+        if self.adaptive_lookahead:
+            # Adaptive Lookahead: 코너링(조향각)에 따라 lookahead를 적응형 단축
+            # 직선(|prev_error| ~ 0): 원래 속도 연동 L 유지 -> 고속 직선 흔들림 방지
+            # 코너(|prev_error| 커질수록): L을 단축 -> 코너 호(arc)를 타이트하게 물고 탈출
+            steer_factor = 1.0 / (1.0 + self.adaptive_lookahead_gain * abs(self.prev_error))
+            L = max(L * steer_factor, self.adaptive_lookahead_min)
 
         P = self.maxP - curr_v * (self.maxP - self.minP) / self.Pscale
         P = max(min(P, self.maxP), self.minP)
@@ -62,7 +71,8 @@ class PurePursuitPlanner:
         self.nearest_dist = nearest_dist
 
         speed, steering, error = get_actuation_PD(
-            pose_theta, lookahead_point, position, new_L, self.wheelbase, self.prev_error, P, self.D, 0.25
+            pose_theta, lookahead_point, position, new_L, self.wheelbase, self.prev_error, P, self.D,
+            self.k_heading
         )
         speed = speed * self.vel_scale
         self.prev_error = error

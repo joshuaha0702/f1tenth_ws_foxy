@@ -33,8 +33,13 @@ class SlamPurePursuitControllerNode(Node):
         self.declare_parameter('raceline_path', '')
         self.declare_parameter('max_speed', 3.0)
         self.declare_parameter('max_steering_angle', 0.26)
-        self.declare_parameter('max_steer_rate', 0.08)
+        # 조향 변화율 제한 [rad/s]. 틱당 한계는 control_frequency로 환산한다.
+        # (플래너 통합 시절 0.08 rad / 10 Hz plan = 0.8 rad/s 와 동일한 실효 제한)
+        self.declare_parameter('max_steer_rate', 0.8)
         self.declare_parameter('control_frequency', 100.0)
+        # 워치독: 입력이 이 시간 이상 끊기면 0-cmd로 전환 (플래너 사망/odom 두절 시 개루프 주행 방지)
+        self.declare_parameter('trajectory_timeout', 0.5)   # 10 Hz 계획 기준 5 주기
+        self.declare_parameter('odom_timeout', 0.2)
         self.declare_parameter('localization_mode', 'scan')
         self.declare_parameter('initial_x', 0.0)
         self.declare_parameter('initial_y', 0.0)
@@ -44,8 +49,11 @@ class SlamPurePursuitControllerNode(Node):
         raceline_path = self.get_parameter('raceline_path').value
         self.max_speed = float(self.get_parameter('max_speed').value)
         self.max_steer = float(self.get_parameter('max_steering_angle').value)
+        self.control_freq = max(float(self.get_parameter('control_frequency').value), 1.0)
         self.max_steer_rate = float(self.get_parameter('max_steer_rate').value)
-        self.control_freq = float(self.get_parameter('control_frequency').value)
+        self.max_steer_step = self.max_steer_rate / self.control_freq   # 틱당 허용 조향 변화 [rad]
+        self.trajectory_timeout = float(self.get_parameter('trajectory_timeout').value)
+        self.odom_timeout = float(self.get_parameter('odom_timeout').value)
         self.loc_mode = str(self.get_parameter('localization_mode').value).lower()
         self.initial_x = float(self.get_parameter('initial_x').value)
         self.initial_y = float(self.get_parameter('initial_y').value)
@@ -91,6 +99,9 @@ class SlamPurePursuitControllerNode(Node):
         self.last_steer = 0.0
         self.best_traj = None
         self.publishing_enabled = True
+        self.last_traj_time = None   # rclpy.time.Time, 마지막 planned_trajectory 수신
+        self.last_odom_time = None   # rclpy.time.Time, 마지막 odom 수신
+        self.stale_reason = None     # 워치독이 멈춘 이유 (복구 로그용)
 
         # Diagnostics & Timing
         self.drive_count = 0
@@ -142,17 +153,20 @@ class SlamPurePursuitControllerNode(Node):
         self.drive_pub = self.create_publisher(AckermannDriveStamped, 'drive', qos)
 
         # --- 100Hz Control Timer ---
-        timer_period = 1.0 / max(self.control_freq, 1.0)
+        timer_period = 1.0 / self.control_freq
         self.control_timer = self.create_timer(timer_period, self._control_timer_callback)
 
         self.get_logger().info(
             f'SLAM Pure Pursuit Controller ready (mode={self.loc_mode}, '
             f'control_freq={self.control_freq:.1f}Hz, max_speed={self.max_speed}m/s, '
-            f'max_steer={self.max_steer:.3f}rad)'
+            f'max_steer={self.max_steer:.3f}rad, max_steer_rate={self.max_steer_rate:.2f}rad/s '
+            f'({self.max_steer_step:.4f}rad/tick), traj_timeout={self.trajectory_timeout}s, '
+            f'odom_timeout={self.odom_timeout}s)'
         )
 
     def _trajectory_callback(self, msg: Float64MultiArray):
         if not msg.data:
+            # 플래너가 계획 실패를 알리는 빈 경로: 타임아웃을 기다리지 않고 즉시 정지
             self.best_traj = None
             return
         if len(msg.data) % 3 != 0:
@@ -161,6 +175,7 @@ class SlamPurePursuitControllerNode(Node):
         if trajectory.shape[0] < 2:
             return
         self.best_traj = trajectory
+        self.last_traj_time = self.get_clock().now()
 
     def _amcl_pose_callback(self, msg: PoseWithCovarianceStamped):
         x = msg.pose.pose.position.x
@@ -219,6 +234,7 @@ class SlamPurePursuitControllerNode(Node):
         v = msg.twist.twist.linear.x
         self.velocity = v
         self.odom_received = True
+        self.last_odom_time = self.get_clock().now()
 
         ox = msg.pose.pose.position.x
         oy = msg.pose.pose.position.y
@@ -261,12 +277,52 @@ class SlamPurePursuitControllerNode(Node):
             cur_yaw = self.initial_map_yaw + (oyaw - self.odom_base_yaw)
             self.pose_theta = math.atan2(math.sin(cur_yaw), math.cos(cur_yaw))
 
+    def _input_stale_reason(self, now):
+        """워치독: 경로/odom 중 하나라도 타임아웃이면 이유 문자열, 정상이면 None."""
+        if self.last_traj_time is None:
+            return 'no trajectory yet'
+        traj_age = (now - self.last_traj_time).nanoseconds * 1e-9
+        if traj_age > self.trajectory_timeout:
+            return f'trajectory stale ({traj_age:.2f}s > {self.trajectory_timeout}s)'
+        if self.last_odom_time is None:
+            return 'no odom yet'
+        odom_age = (now - self.last_odom_time).nanoseconds * 1e-9
+        if odom_age > self.odom_timeout:
+            return f'odom stale ({odom_age:.2f}s > {self.odom_timeout}s)'
+        return None
+
+    def _publish_stop(self, stamp):
+        stop_msg = AckermannDriveStamped()
+        stop_msg.header.stamp = stamp
+        stop_msg.header.frame_id = 'base_link'
+        stop_msg.drive.speed = 0.0
+        stop_msg.drive.steering_angle = 0.0
+        self.drive_pub.publish(stop_msg)
+        self.last_steer = 0.0
+
     def _control_timer_callback(self):
-        trajectory = self.best_traj
-        if not self.publishing_enabled or trajectory is None or not self.amcl_received:
+        if not self.publishing_enabled or not self.amcl_received:
             return
 
         now = self.get_clock().now()
+
+        # 워치독: 플래너 사망·계획 실패·odom 두절 시 낡은 입력으로 개루프 주행하지 않도록
+        # 매 틱 0-cmd를 계속 보내 액추에이터를 정지 상태로 유지한다 (한 번만 보내면 VESC가
+        # 마지막 명령을 유지할 수 있음).
+        reason = self._input_stale_reason(now)
+        if reason is None and self.best_traj is None:
+            reason = 'trajectory cleared by planner'
+        if reason is not None:
+            if self.stale_reason != reason:
+                self.get_logger().warn(f'[watchdog] stopping: {reason}')
+                self.stale_reason = reason
+            self._publish_stop(now.to_msg())
+            return
+        if self.stale_reason is not None:
+            self.get_logger().info('[watchdog] inputs healthy again, resuming control')
+            self.stale_reason = None
+
+        trajectory = self.best_traj
 
         # Ultra-fast Pure Pursuit control calculation (< 0.05ms)
         steering, speed = self.tracker.plan(
@@ -274,9 +330,9 @@ class SlamPurePursuitControllerNode(Node):
             self.velocity, trajectory
         )
 
-        # Steering rate limit & saturation
+        # Steering rate limit [rad/s -> rad/tick] & saturation
         steer_diff = steering - self.last_steer
-        steer_diff = max(min(steer_diff, self.max_steer_rate), -self.max_steer_rate)
+        steer_diff = max(min(steer_diff, self.max_steer_step), -self.max_steer_step)
         steering = self.last_steer + steer_diff
         self.last_steer = steering
 
@@ -319,16 +375,13 @@ class SlamPurePursuitControllerNode(Node):
             self.best_traj = None
             self.drive_count = 0
             self.first_drive_stamp_ns = None
-            stop_msg = AckermannDriveStamped()
-            stop_msg.header.stamp = self.get_clock().now().to_msg()
-            stop_msg.header.frame_id = 'base_link'
-            stop_msg.drive.speed = 0.0
-            stop_msg.drive.steering_angle = 0.0
-            self.drive_pub.publish(stop_msg)
+            self._publish_stop(self.get_clock().now().to_msg())
         elif command == 'START':
             self.publishing_enabled = True
             self.drive_count = 0
             self.first_drive_stamp_ns = None
+            self.last_steer = 0.0      # 이전 에피소드의 조향값에서 램프업하지 않도록
+            self.stale_reason = None
 
 
 def main(args=None):

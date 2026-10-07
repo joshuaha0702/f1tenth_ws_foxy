@@ -23,7 +23,7 @@ def generate_launch_description():
     config_arg = DeclareLaunchArgument(
         'config',
         default_value=default_lattice_config,
-        description='Path to lattice_config.yaml'
+        description='실차용 lattice config 경로 (기본 lattice_config.yaml; 시뮬용 sim_lattice_config.yaml 아님)'
     )
     amcl_config_arg = DeclareLaunchArgument(
         'amcl_config',
@@ -174,6 +174,11 @@ def generate_launch_description():
             'max_speed': max_speed,
             'max_steering_angle': 0.26,
             'control_frequency': 100.0,
+            # 조향 변화율 [rad/s]: 플래너 통합 시절(0.08 rad / 10 Hz)과 같은 실효 제한
+            'max_steer_rate': 0.8,
+            # 워치독: 플래너 사망/계획 실패/odom 두절 시 0-cmd로 전환
+            'trajectory_timeout': 0.5,
+            'odom_timeout': 0.2,
             'localization_mode': loc_mode,
             'use_sim_time': False
         }],
