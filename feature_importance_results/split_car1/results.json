@@ -1,0 +1,621 @@
+{
+  "data_files": [
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0000_20260928_171902.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0002_20260928_171922.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0003_20260928_171935.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0004_20260928_171945.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0005_20260928_171955.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0006_20260928_172008.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0007_20260928_172019.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0008_20260928_172029.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0009_20260928_172042.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0010_20260928_172052.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0011_20260928_172102.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0012_20260928_172112.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0013_20260928_172126.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0014_20260928_172136.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0015_20260928_172146.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0016_20260928_172159.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0018_20260928_172219.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0019_20260928_172232.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0020_20260928_172242.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0021_20260928_172252.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0022_20260928_172306.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0023_20260928_172316.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0024_20260928_172326.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0025_20260928_172336.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0027_20260928_172359.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0028_20260928_172409.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0029_20260928_172422.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0030_20260928_172432.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0031_20260928_172442.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0032_20260928_172455.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0033_20260928_172505.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0034_20260928_172515.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0037_20260928_172548.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0038_20260928_172558.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0039_20260928_172611.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0040_20260928_172621.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0041_20260928_172631.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0042_20260928_172644.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0044_20260928_172704.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0045_20260928_172718.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0046_20260928_172728.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0047_20260928_172738.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0048_20260928_172752.csv",
+    "data/simple_variants_h2h/Simple_v07/csv/car1_extracted_ep0049_20260928_172802.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0000_20260928_184002.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0001_20260928_184015.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0002_20260928_184025.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0005_20260928_184058.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0006_20260928_184108.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0007_20260928_184121.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0009_20260928_184141.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0010_20260928_184155.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0011_20260928_184205.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0012_20260928_184215.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0013_20260928_184225.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0015_20260928_184249.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0017_20260928_184312.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0018_20260928_184322.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0019_20260928_184332.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0020_20260928_184346.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0021_20260928_184356.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0022_20260928_184406.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0023_20260928_184419.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0024_20260928_184429.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0025_20260928_184439.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0026_20260928_184449.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0027_20260928_184502.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0028_20260928_184512.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0030_20260928_184536.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0031_20260928_184546.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0032_20260928_184556.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0033_20260928_184609.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0035_20260928_184629.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0036_20260928_184642.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0037_20260928_184652.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0038_20260928_184702.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0039_20260928_184712.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0040_20260928_184725.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0041_20260928_184735.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0042_20260928_184745.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0043_20260928_184758.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0044_20260928_184808.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0045_20260928_184818.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0046_20260928_184832.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0047_20260928_184842.csv",
+    "data/simple_variants_h2h/Simple_v15/csv/car1_extracted_ep0048_20260928_184852.csv"
+  ],
+  "num_sequences": 670,
+  "models": {
+    "ego_variants_20260929": {
+      "baseline_steer_mse": 0.0031252183229175967,
+      "baseline_speed_mse": 0.004436082362044436,
+      "groups": {
+        "Right Rear (0-59)": {
+          "steer_pct": 132.02306106014026,
+          "steer_pct_std": 18.634545626000335,
+          "speed_pct": 392.1320476851684,
+          "speed_pct_std": 29.729517473361355
+        },
+        "Right (60-119)": {
+          "steer_pct": 202.74569479993377,
+          "steer_pct_std": 22.46573918447854,
+          "speed_pct": 36.94424911129714,
+          "speed_pct_std": 7.122312252250125
+        },
+        "Front-Right (120-179)": {
+          "steer_pct": 124.40399858568762,
+          "steer_pct_std": 10.554456246569881,
+          "speed_pct": 127.22192544103761,
+          "speed_pct_std": 35.78831823923515
+        },
+        "Front-Left (180-239)": {
+          "steer_pct": 159.70959372702467,
+          "steer_pct_std": 13.383137887037737,
+          "speed_pct": 42.91902662698734,
+          "speed_pct_std": 20.611509889751492
+        },
+        "Left (240-299)": {
+          "steer_pct": 26.72569649827208,
+          "steer_pct_std": 9.884781130495723,
+          "speed_pct": 12.575192272438574,
+          "speed_pct_std": 12.677455555826688
+        },
+        "Left Rear (300-359)": {
+          "steer_pct": 41.49957419381142,
+          "steer_pct_std": 11.757601736476023,
+          "speed_pct": 62.97858541601535,
+          "speed_pct_std": 57.932334562088286
+        },
+        "Speed Input": {
+          "steer_pct": 197.74487418350725,
+          "steer_pct_std": 14.259999065791876,
+          "speed_pct": 9409.680904828067,
+          "speed_pct_std": 226.19696114970483
+        }
+      }
+    },
+    "ego_variants_20260929_ft": {
+      "baseline_steer_mse": 0.003140651315450668,
+      "baseline_speed_mse": 0.0046924412812648425,
+      "groups": {
+        "Right Rear (0-59)": {
+          "steer_pct": 122.11421569431127,
+          "steer_pct_std": 15.45822736857856,
+          "speed_pct": 356.77834516776795,
+          "speed_pct_std": 18.879047573556534
+        },
+        "Right (60-119)": {
+          "steer_pct": 206.3799922058601,
+          "steer_pct_std": 20.37962151025287,
+          "speed_pct": 42.128520106799556,
+          "speed_pct_std": 6.4436188055041415
+        },
+        "Front-Right (120-179)": {
+          "steer_pct": 127.0539486556194,
+          "steer_pct_std": 11.06334048699136,
+          "speed_pct": 170.6562490802294,
+          "speed_pct_std": 38.804965006696705
+        },
+        "Front-Left (180-239)": {
+          "steer_pct": 176.50096788875013,
+          "steer_pct_std": 13.67145769910044,
+          "speed_pct": 69.43096015173128,
+          "speed_pct_std": 23.481495740346787
+        },
+        "Left (240-299)": {
+          "steer_pct": 27.041501997867506,
+          "steer_pct_std": 8.92204433323737,
+          "speed_pct": 21.553950513436043,
+          "speed_pct_std": 17.074197597015587
+        },
+        "Left Rear (300-359)": {
+          "steer_pct": 42.00059693209444,
+          "steer_pct_std": 11.560872506180019,
+          "speed_pct": 67.77761335860188,
+          "speed_pct_std": 57.97784987716752
+        },
+        "Speed Input": {
+          "steer_pct": 171.12953423488872,
+          "steer_pct_std": 12.621953660382404,
+          "speed_pct": 8325.036567612882,
+          "speed_pct_std": 199.3507217015176
+        }
+      }
+    },
+    "end2race": {
+      "baseline_steer_mse": 0.03190952779285943,
+      "baseline_speed_mse": 8.847371618470149,
+      "groups": {
+        "Right Rear (0-59)": {
+          "steer_pct": -6.6800183165703775,
+          "steer_pct_std": 0.37572992348047723,
+          "speed_pct": -6.45852301742526,
+          "speed_pct_std": 0.36222106198231196
+        },
+        "Right (60-119)": {
+          "steer_pct": -11.393093361783249,
+          "steer_pct_std": 0.7053767325028164,
+          "speed_pct": 2.665105736524047,
+          "speed_pct_std": 0.1714008411047391
+        },
+        "Front-Right (120-179)": {
+          "steer_pct": -34.664589826482896,
+          "steer_pct_std": 1.925258429522053,
+          "speed_pct": 0.284175396819134,
+          "speed_pct_std": 0.26181655309802415
+        },
+        "Front-Left (180-239)": {
+          "steer_pct": -23.831927522145264,
+          "steer_pct_std": 2.4693231054085207,
+          "speed_pct": -10.298576802424627,
+          "speed_pct_std": 0.6320414931543858
+        },
+        "Left (240-299)": {
+          "steer_pct": -2.7426392981950776,
+          "steer_pct_std": 0.6789750117118344,
+          "speed_pct": -0.7698460570554495,
+          "speed_pct_std": 0.21128929637686777
+        },
+        "Left Rear (300-359)": {
+          "steer_pct": 0.2332431763652531,
+          "steer_pct_std": 1.291356722561928,
+          "speed_pct": -0.6873387736014769,
+          "speed_pct_std": 0.13283203968814147
+        },
+        "Speed Input": {
+          "steer_pct": -11.16190724617711,
+          "steer_pct_std": 0.5129377850492605,
+          "speed_pct": -0.31774084024105476,
+          "speed_pct_std": 0.25351669890474005
+        }
+      }
+    },
+    "leader_variants_20260929": {
+      "baseline_steer_mse": 0.006097646764854887,
+      "baseline_speed_mse": 0.14902905114017315,
+      "groups": {
+        "Right Rear (0-59)": {
+          "steer_pct": 5.960880682819928,
+          "steer_pct_std": 1.5583801511642021,
+          "speed_pct": 0.3506189017152541,
+          "speed_pct_std": 0.07407440171901002
+        },
+        "Right (60-119)": {
+          "steer_pct": 33.75243734867104,
+          "steer_pct_std": 1.9296713501779035,
+          "speed_pct": 0.46393887231204867,
+          "speed_pct_std": 0.04337542371519677
+        },
+        "Front-Right (120-179)": {
+          "steer_pct": 10.09680049787028,
+          "steer_pct_std": 1.7998845436771846,
+          "speed_pct": 0.5923516924354983,
+          "speed_pct_std": 0.05372315498537366
+        },
+        "Front-Left (180-239)": {
+          "steer_pct": 16.414400316482013,
+          "steer_pct_std": 1.1280036608244495,
+          "speed_pct": -0.4816535274798355,
+          "speed_pct_std": 0.03532786491727239
+        },
+        "Left (240-299)": {
+          "steer_pct": 3.032328498436628,
+          "steer_pct_std": 0.9351736752610091,
+          "speed_pct": 0.1052515808904805,
+          "speed_pct_std": 0.04316540395493739
+        },
+        "Left Rear (300-359)": {
+          "steer_pct": 1.4520740753610872,
+          "steer_pct_std": 0.7928180894669893,
+          "speed_pct": -0.0646501780667365,
+          "speed_pct_std": 0.0972456104969584
+        },
+        "Speed Input": {
+          "steer_pct": 3.728700210930574,
+          "steer_pct_std": 0.4930432872014513,
+          "speed_pct": 198.63307837234703,
+          "speed_pct_std": 5.538295675927502
+        }
+      }
+    },
+    "origin_0820": {
+      "baseline_steer_mse": 0.005356224156137722,
+      "baseline_speed_mse": 0.011832629975987904,
+      "groups": {
+        "Right Rear (0-59)": {
+          "steer_pct": 15.224973788503922,
+          "steer_pct_std": 7.029477111075515,
+          "speed_pct": 172.26905383542314,
+          "speed_pct_std": 10.949701009438314
+        },
+        "Right (60-119)": {
+          "steer_pct": 50.44196744082674,
+          "steer_pct_std": 7.3368310495214955,
+          "speed_pct": -2.360355269891765,
+          "speed_pct_std": 2.5218548772340807
+        },
+        "Front-Right (120-179)": {
+          "steer_pct": 56.71957399399419,
+          "steer_pct_std": 6.611829615551155,
+          "speed_pct": 15.660236360917471,
+          "speed_pct_std": 1.88117874569548
+        },
+        "Front-Left (180-239)": {
+          "steer_pct": 77.55032177770128,
+          "steer_pct_std": 10.157650564039116,
+          "speed_pct": 135.51213658967353,
+          "speed_pct_std": 11.43369275451865
+        },
+        "Left (240-299)": {
+          "steer_pct": 6.218986147830587,
+          "steer_pct_std": 1.4073562380781646,
+          "speed_pct": -2.1280760213871504,
+          "speed_pct_std": 1.958359072449725
+        },
+        "Left Rear (300-359)": {
+          "steer_pct": 10.719895464127818,
+          "steer_pct_std": 3.415166486780062,
+          "speed_pct": -0.9990896044107892,
+          "speed_pct_std": 2.56496208480026
+        },
+        "Speed Input": {
+          "steer_pct": 72.96370200742267,
+          "steer_pct_std": 4.229593255742422,
+          "speed_pct": 3051.246705764716,
+          "speed_pct_std": 99.30153434535018
+        }
+      }
+    },
+    "origin_20260616": {
+      "baseline_steer_mse": 0.008149241244615014,
+      "baseline_speed_mse": 0.2589625181013079,
+      "groups": {
+        "Right Rear (0-59)": {
+          "steer_pct": 1.1684172362967207,
+          "steer_pct_std": 1.0705722932642878,
+          "speed_pct": 1.003213958259225,
+          "speed_pct_std": 0.031575010626904265
+        },
+        "Right (60-119)": {
+          "steer_pct": 0.7866489757772164,
+          "steer_pct_std": 0.7253747652432901,
+          "speed_pct": 0.4454607647168885,
+          "speed_pct_std": 0.12536714226265672
+        },
+        "Front-Right (120-179)": {
+          "steer_pct": 28.523289785378086,
+          "steer_pct_std": 2.3055274099675995,
+          "speed_pct": -2.1093714994959174,
+          "speed_pct_std": 0.31625617103384135
+        },
+        "Front-Left (180-239)": {
+          "steer_pct": 44.565067264545114,
+          "steer_pct_std": 1.809802579676131,
+          "speed_pct": -0.5406429424023453,
+          "speed_pct_std": 0.12900970350307348
+        },
+        "Left (240-299)": {
+          "steer_pct": 0.2242143323430636,
+          "steer_pct_std": 0.19849687574980257,
+          "speed_pct": 0.0917367645514119,
+          "speed_pct_std": 0.05873929394198994
+        },
+        "Left Rear (300-359)": {
+          "steer_pct": -0.7669425277925352,
+          "steer_pct_std": 0.7194630339861888,
+          "speed_pct": 0.10255551792598001,
+          "speed_pct_std": 0.12736304408078308
+        },
+        "Speed Input": {
+          "steer_pct": 1.7594715195198074,
+          "steer_pct_std": 0.27776790714312644,
+          "speed_pct": 25.408306197128976,
+          "speed_pct_std": 0.7368036346442839
+        }
+      }
+    },
+    "origin_20260619": {
+      "baseline_steer_mse": 0.007982211714360251,
+      "baseline_speed_mse": 0.24717495923300287,
+      "groups": {
+        "Right Rear (0-59)": {
+          "steer_pct": 1.110526420437988,
+          "steer_pct_std": 1.0612182096412441,
+          "speed_pct": 2.7515891600624456,
+          "speed_pct_std": 0.11428412890097392
+        },
+        "Right (60-119)": {
+          "steer_pct": 3.467359707008991,
+          "steer_pct_std": 0.8503237200144904,
+          "speed_pct": 2.1433630397711783,
+          "speed_pct_std": 0.755774859250794
+        },
+        "Front-Right (120-179)": {
+          "steer_pct": 25.53598962555174,
+          "steer_pct_std": 3.089631097983044,
+          "speed_pct": -1.380229070020461,
+          "speed_pct_std": 0.36181062594197816
+        },
+        "Front-Left (180-239)": {
+          "steer_pct": 18.78163876516458,
+          "steer_pct_std": 0.9853710054118814,
+          "speed_pct": 1.2965980920084124,
+          "speed_pct_std": 0.287137140934467
+        },
+        "Left (240-299)": {
+          "steer_pct": 2.7343157259171513,
+          "steer_pct_std": 0.5772812663659302,
+          "speed_pct": 0.6658940933576825,
+          "speed_pct_std": 0.25915304598842354
+        },
+        "Left Rear (300-359)": {
+          "steer_pct": -1.744436167322192,
+          "steer_pct_std": 0.7083723079169512,
+          "speed_pct": 0.18970166094722202,
+          "speed_pct_std": 0.24916590580439713
+        },
+        "Speed Input": {
+          "steer_pct": 1.1062758228239715,
+          "steer_pct_std": 0.6356375934797338,
+          "speed_pct": 29.951262473230816,
+          "speed_pct_std": 0.9327499805209276
+        }
+      }
+    },
+    "origin_20260629": {
+      "baseline_steer_mse": 0.008939596300694479,
+      "baseline_speed_mse": 0.021566579078560445,
+      "groups": {
+        "Right Rear (0-59)": {
+          "steer_pct": 10.160836157807347,
+          "steer_pct_std": 3.695728920654575,
+          "speed_pct": 2.1589534891135935,
+          "speed_pct_std": 1.7262409901320428
+        },
+        "Right (60-119)": {
+          "steer_pct": 44.12812618879932,
+          "steer_pct_std": 6.531052498310069,
+          "speed_pct": 2.2348392877966576,
+          "speed_pct_std": 3.1039584141705268
+        },
+        "Front-Right (120-179)": {
+          "steer_pct": 22.22906747070148,
+          "steer_pct_std": 2.9843483477136656,
+          "speed_pct": 4.177017885424071,
+          "speed_pct_std": 3.004155418057794
+        },
+        "Front-Left (180-239)": {
+          "steer_pct": 17.369916179410787,
+          "steer_pct_std": 5.266149034753907,
+          "speed_pct": 26.42609996285163,
+          "speed_pct_std": 2.8573613250644305
+        },
+        "Left (240-299)": {
+          "steer_pct": 1.816095519972271,
+          "steer_pct_std": 2.072543866251434,
+          "speed_pct": -4.705227052010929,
+          "speed_pct_std": 1.2735944478666539
+        },
+        "Left Rear (300-359)": {
+          "steer_pct": 9.551101760818009,
+          "steer_pct_std": 3.4383156784652975,
+          "speed_pct": -7.264947483980961,
+          "speed_pct_std": 0.44070480306168186
+        },
+        "Speed Input": {
+          "steer_pct": 21.686543331980253,
+          "steer_pct_std": 3.7246139376622542,
+          "speed_pct": 2380.715794113471,
+          "speed_pct_std": 74.48607140308327
+        }
+      }
+    },
+    "origin_20260630": {
+      "baseline_steer_mse": 0.007255443500049079,
+      "baseline_speed_mse": 0.19175072024484624,
+      "groups": {
+        "Right Rear (0-59)": {
+          "steer_pct": -1.668038793701458,
+          "steer_pct_std": 1.8341508748707291,
+          "speed_pct": 12.06001701166311,
+          "speed_pct_std": 0.8272887332359671
+        },
+        "Right (60-119)": {
+          "steer_pct": 14.678715434469547,
+          "steer_pct_std": 1.3066863750722473,
+          "speed_pct": -0.5436008404563757,
+          "speed_pct_std": 0.42085360210603623
+        },
+        "Front-Right (120-179)": {
+          "steer_pct": 8.294192689889126,
+          "steer_pct_std": 2.5951480487049334,
+          "speed_pct": -2.282238827611138,
+          "speed_pct_std": 0.8248525082851867
+        },
+        "Front-Left (180-239)": {
+          "steer_pct": 16.44420498775388,
+          "steer_pct_std": 1.9295914670997119,
+          "speed_pct": -4.3129727224009375,
+          "speed_pct_std": 0.5880294929059039
+        },
+        "Left (240-299)": {
+          "steer_pct": 1.1248553136140687,
+          "steer_pct_std": 1.2867285636298167,
+          "speed_pct": 0.037574944165174526,
+          "speed_pct_std": 0.53016029180645
+        },
+        "Left Rear (300-359)": {
+          "steer_pct": 2.139290819232131,
+          "steer_pct_std": 0.5668094522451983,
+          "speed_pct": -0.399567914433005,
+          "speed_pct_std": 0.8194303178048594
+        },
+        "Speed Input": {
+          "steer_pct": 2.9327113114680072,
+          "steer_pct_std": 0.41291024977683793,
+          "speed_pct": 66.61705428654801,
+          "speed_pct_std": 2.484178061700452
+        }
+      }
+    },
+    "origin_20260705": {
+      "baseline_steer_mse": 0.011302778663919932,
+      "baseline_speed_mse": 0.030710972664961176,
+      "groups": {
+        "Right Rear (0-59)": {
+          "steer_pct": 10.719643540531461,
+          "steer_pct_std": 4.533546949593274,
+          "speed_pct": 52.22528727174351,
+          "speed_pct_std": 7.583997742494557
+        },
+        "Right (60-119)": {
+          "steer_pct": 45.60496422224459,
+          "steer_pct_std": 4.741103308589635,
+          "speed_pct": 57.978967970209226,
+          "speed_pct_std": 7.881806224912449
+        },
+        "Front-Right (120-179)": {
+          "steer_pct": 21.174388989223576,
+          "steer_pct_std": 6.686875326791635,
+          "speed_pct": 218.23920594803567,
+          "speed_pct_std": 17.67687574441288
+        },
+        "Front-Left (180-239)": {
+          "steer_pct": 41.658605829615325,
+          "steer_pct_std": 2.5162098467446743,
+          "speed_pct": 34.37531627767895,
+          "speed_pct_std": 3.004517906849775
+        },
+        "Left (240-299)": {
+          "steer_pct": 6.811558448105089,
+          "steer_pct_std": 2.7130153554295466,
+          "speed_pct": 5.102726472882294,
+          "speed_pct_std": 2.1923534771060416
+        },
+        "Left Rear (300-359)": {
+          "steer_pct": 14.102269744324298,
+          "steer_pct_std": 4.9271774915833,
+          "speed_pct": 19.049772839631466,
+          "speed_pct_std": 4.428412656668676
+        },
+        "Speed Input": {
+          "steer_pct": 17.68588915049325,
+          "steer_pct_std": 2.088308165996428,
+          "speed_pct": 1058.721308176194,
+          "speed_pct_std": 42.030175857999076
+        }
+      }
+    },
+    "origin_20260722": {
+      "baseline_steer_mse": 0.007759374403241855,
+      "baseline_speed_mse": 0.019561560032972648,
+      "groups": {
+        "Right Rear (0-59)": {
+          "steer_pct": 2.2675634508725553,
+          "steer_pct_std": 1.4781234841701227,
+          "speed_pct": 0.3602361359663542,
+          "speed_pct_std": 0.7766866784593147
+        },
+        "Right (60-119)": {
+          "steer_pct": 3.0106810181061077,
+          "steer_pct_std": 0.5730983786371067,
+          "speed_pct": 6.255298311730661,
+          "speed_pct_std": 0.41439995861745604
+        },
+        "Front-Right (120-179)": {
+          "steer_pct": 6.824875423454539,
+          "steer_pct_std": 0.8337984290542174,
+          "speed_pct": 1.3722647383636826,
+          "speed_pct_std": 0.7456624070284127
+        },
+        "Front-Left (180-239)": {
+          "steer_pct": 31.116751163754305,
+          "steer_pct_std": 2.0418179950611948,
+          "speed_pct": -0.5824598763064388,
+          "speed_pct_std": 2.782002066514744
+        },
+        "Left (240-299)": {
+          "steer_pct": 1.447578630613084,
+          "steer_pct_std": 0.15381698429521468,
+          "speed_pct": -0.8852929253324795,
+          "speed_pct_std": 0.37707864041254885
+        },
+        "Left Rear (300-359)": {
+          "steer_pct": -3.411813497870895,
+          "steer_pct_std": 0.9933868899904847,
+          "speed_pct": 1.9980189649557403,
+          "speed_pct_std": 0.40925666805635874
+        },
+        "Speed Input": {
+          "steer_pct": -0.12092836844912884,
+          "steer_pct_std": 0.44478237350769156,
+          "speed_pct": 2392.4474474797653,
+          "speed_pct_std": 71.26134238947535
+        }
+      }
+    }
+  }
+}
