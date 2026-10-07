@@ -42,7 +42,7 @@ spawn_perturbation:
 random_seed: 42
 
 # 에피소드 1개당 sim 시간 기준 녹화 길이 (초)
-sequence_duration_sec: 8.0
+sequence_duration_sec: 12.0
 
 # 텔레포트 후 차량/물리가 안정화될 시간 (sim 초)
 settle_time_sec: 3.0

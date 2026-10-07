@@ -6,10 +6,11 @@
   1) planner를 STOP 시키고 마지막 0-cmd를 보내 Gazebo 액추에이터를 멈춤
   2) Gazebo physics를 pause 한 뒤 SetEntityState로 차량(들)을 텔레포트
   3) unpause 후 settle_time (sim 시간) 대기
-  4) 별도 `ros2 bag record` 프로세스를 띄움 → 토픽 discovery 대기
+  4) 별도 `ros2 bag record` 프로세스를 띄움 → 녹화 토픽을 전부 구독할 때까지 대기
   5) planner를 START → 정확히 이 시점부터 sim 시간 기반으로 sequence_duration 동안 진행
   6) 진행 중 /car1/chassis_bumper_states, /car2/chassis_bumper_states 를 감시
-  7) 시퀀스 길이 도달 시 STOP → bag 종료 → 충돌 여부에 따라 clean/ 또는 collision/ 으로 이동
+  7) 시퀀스 길이 도달 시 STOP → bag 종료 → episode_info.yaml(t_start/t_end) 기록 →
+     충돌 여부에 따라 clean/ 또는 collision/ 으로 이동
 """
 
 import os
@@ -20,6 +21,7 @@ import random
 import shutil
 import signal
 import threading
+import sqlite3
 import subprocess
 from datetime import datetime
 
@@ -27,6 +29,8 @@ import yaml
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
+from rclpy.serialization import deserialize_message
+from rosidl_runtime_py.utilities import get_message
 
 from std_msgs.msg import String
 from rosgraph_msgs.msg import Clock
@@ -50,11 +54,18 @@ class EpisodeManagerNode(Node):
         self.declare_parameter('episodes_yaml', '')
         self.declare_parameter('head2head', False)
         self.declare_parameter('record', False)
+        # car1이 lattice planner가 아닐 때(예: End2Race 모델 평가) false.
+        # car1 planner의 SetParameters 서비스를 기다리거나 호출하지 않는다.
+        self.declare_parameter('car1_planner', True)
+        # car2(선두차)도 같은 규칙: End2Race 선두차 모델 평가 시 false.
+        self.declare_parameter('car2_planner', True)
 
         yaml_path = self.get_parameter('episodes_yaml').value
         self.head2head = bool(self.get_parameter('head2head').value)
         record_param = self.get_parameter('record').value
         self.do_record = str(record_param).lower() == 'true'
+        self.car1_planner = str(self.get_parameter('car1_planner').value).lower() == 'true'
+        self.car2_planner = str(self.get_parameter('car2_planner').value).lower() == 'true'
 
         # yaml 로드 + 엄격 검증. 실패 시 fatal 로그 후 즉시 종료(비정상 exit code).
         self.cfg = self._load_and_validate_yaml(yaml_path)
@@ -68,6 +79,28 @@ class EpisodeManagerNode(Node):
         self.collision_dir = os.path.join(self.base_dir, out.get('collision_subdir', 'collision'))
         for d in (self.staging_dir, self.clean_dir, self.collision_dir):
             os.makedirs(d, exist_ok=True)
+
+        # 녹화 토픽: `-a`로 marker/tf/link_states까지 쓰면 Foxy 레코더가 밀려서
+        # drive/odom/scan이 수신 큐에서 버려짐(에피소드 중간 수백 ms 공백).
+        # 학습(scan/drive/clock)·검증(odom)·평가에 쓰는 토픽만 녹화한다.
+        cars = ['car1', 'car2'] if self.head2head else ['car1']
+        default_topics = ['/clock', '/episode/control'] + [
+            f'/{car}/{kind}' for car in cars for kind in ('drive', 'odom', 'scan')
+        ]
+        self.record_topics = list(out.get('record_topics', default_topics))
+        # 레코더가 잠깐 밀려도 버티도록 수신 큐를 깊게 잡는다. 발행 측 QoS가 모두
+        # reliable/volatile이라 맞춰줌. --max-cache-size는 쓰지 않음: Foxy(rosbag2
+        # 0.3.11)는 종료 시 캐시에 남은 메시지를 버려 에피소드 끝 ~2 s가 사라짐.
+        record_queue_depth = int(out.get('record_queue_depth', 1000))
+        # bag이 에피소드를 다 담지 못하면 같은 초기조건으로 재실행하는 횟수
+        self.record_retries = int(out.get('record_retries', 2))
+        self.record_qos_path = os.path.join(self.staging_dir, 'record_qos.yaml')
+        with open(self.record_qos_path, 'w') as f:
+            yaml.safe_dump({
+                topic: {'history': 'keep_last', 'depth': record_queue_depth,
+                        'reliability': 'reliable', 'durability': 'volatile'}
+                for topic in self.record_topics
+            }, f)
 
         # raceline에서 행을 랜덤 샘플링해 에피소드 초기 자세를 자동 생성함
         # (직접 좌표 박는 옛 방식 대신, num_episodes + raceline_path + opponent_offset 으로 설정)
@@ -107,6 +140,15 @@ class EpisodeManagerNode(Node):
             AckermannDriveStamped, '/car1/drive',
             self._drive_callback, 10
         )
+        # car2는 planner timer 위상 차로 car1보다 수십 ms 늦게 출발할 수 있어
+        # bag 커버리지 검증용으로 첫 drive 시각을 따로 잡아둔다.
+        self._car2_first_drive_sim_time = None
+        self._watching_car2_first_drive = False
+        if self.head2head:
+            self.create_subscription(
+                AckermannDriveStamped, '/car2/drive',
+                self._car2_drive_callback, 10
+            )
 
         bumper_qos = QoSProfile(depth=20)
         bumper_qos.reliability = ReliabilityPolicy.BEST_EFFORT
@@ -165,6 +207,11 @@ class EpisodeManagerNode(Node):
             # 이게 가장 정확한 "drive가 다시 발행된 순간"
             stamp = msg.header.stamp
             self._first_drive_sim_time = stamp.sec + stamp.nanosec * 1e-9
+
+    def _car2_drive_callback(self, msg: AckermannDriveStamped):
+        if self._watching_car2_first_drive and self._car2_first_drive_sim_time is None:
+            stamp = msg.header.stamp
+            self._car2_first_drive_sim_time = stamp.sec + stamp.nanosec * 1e-9
 
     # ---------------- yaml validation ----------------
 
@@ -516,9 +563,10 @@ class EpisodeManagerNode(Node):
             (self.set_state_cli, '/gazebo/set_entity_state'),
             (self.pause_cli, '/pause_physics'),
             (self.unpause_cli, '/unpause_physics'),
-            (self.param_cli_car1, '/car1/lattice_planner/set_parameters'),
         ]
-        if self.head2head:
+        if self.car1_planner:
+            required.append((self.param_cli_car1, '/car1/lattice_planner/set_parameters'))
+        if self.head2head and self.car2_planner:
             required.append(
                 (self.param_cli_car2, '/car2/lattice_planner/set_parameters')
             )
@@ -610,13 +658,38 @@ class EpisodeManagerNode(Node):
         while rclpy.ok() and time.time() < end:
             time.sleep(min(0.02, max(0.0, end - time.time())))
 
+    # `ros2 bag record`가 만드는 노드 이름 (Foxy rosbag2 0.3.x 고정값)
+    RECORDER_NODE_NAME = '_ros2cli_rosbag2'
+
+    def _recorder_subscribed_topics(self) -> set:
+        return {
+            topic for topic in self.record_topics
+            if any(info.node_name == self.RECORDER_NODE_NAME
+                   for info in self.get_subscriptions_info_by_topic(topic))
+        }
+
+    def _wait_for_recorder(self, subscribed: bool, timeout_sec: float) -> bool:
+        """레코더가 녹화 토픽을 전부 구독할 때까지(subscribed=False면 이전 레코더가
+        그래프에서 사라질 때까지) wall 기준 polling. 시간 내 도달하면 True."""
+        deadline = time.time() + timeout_sec
+        while rclpy.ok():
+            n = len(self._recorder_subscribed_topics())
+            if (n == len(self.record_topics)) if subscribed else (n == 0):
+                return True
+            if time.time() > deadline:
+                return False
+            time.sleep(0.05)
+        return False
+
     def _start_bag_record(self, bag_path: str) -> subprocess.Popen:
-        # ros2 bag record -o <path> -a 를 별도 프로세스 그룹에서 실행
+        # ros2 bag record -o <path> <topics> 를 별도 프로세스 그룹에서 실행
         # SIGINT을 그룹 전체로 보내려고 setsid 사용 (자식까지 정상 종료시킴)
         os.makedirs(os.path.dirname(bag_path), exist_ok=True)
         env = os.environ.copy()
         proc = subprocess.Popen(
-            ['ros2', 'bag', 'record', '-o', bag_path, '-a'],
+            ['ros2', 'bag', 'record', '-o', bag_path,
+             '--qos-profile-overrides-path', self.record_qos_path]
+            + self.record_topics,
             preexec_fn=os.setsid,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -657,9 +730,13 @@ class EpisodeManagerNode(Node):
             time.sleep(0.05)
 
         for idx, ep in enumerate(self.episodes):
-            self._run_one_episode(idx, ep)
+            for attempt in range(self.record_retries + 1):
+                if self._run_one_episode(idx, ep, retry_left=attempt < self.record_retries):
+                    break
 
-    def _run_one_episode(self, idx: int, ep: dict):
+    def _run_one_episode(self, idx: int, ep: dict, retry_left: bool = False) -> bool:
+        """에피소드 1회 실행. bag이 에피소드를 다 담지 못했고 retry_left면 bag을
+        버리고 False를 반환(같은 초기조건으로 재실행됨)."""
         ep_label = f'ep{idx:04d}'
         meta = ep.get('_meta', {})
         self.get_logger().info('=' * 60)
@@ -708,23 +785,41 @@ class EpisodeManagerNode(Node):
 
         # 4) bag record subprocess (record=true 일 때만)
         bag_proc = None
+        recorder_ready = None
         if self.do_record:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             staging_bag_path = os.path.join(self.staging_dir, f'{ep_label}_{timestamp}')
+            # 이전 에피소드 레코더가 그래프에 남아 있으면 새 레코더 구독으로 착각함
+            if not self._wait_for_recorder(subscribed=False, timeout_sec=5.0):
+                self.get_logger().warn(f'[{ep_label}] previous bag recorder still in the graph')
             bag_proc = self._start_bag_record(staging_bag_path)
-            # bag이 /car1/drive 토픽 구독을 잡을 짧은 시간만 줌
-            self._spin_for_wall(0.5)
+            # 고정 0.5 s 대기로는 레코더가 늦게 붙는 경우(최대 ~3 s sim) 에피소드
+            # 앞부분이 녹화되지 않았음 → 모든 녹화 토픽 구독을 확인한 뒤 START.
+            wait_start = time.time()
+            recorder_ready = self._wait_for_recorder(subscribed=True, timeout_sec=30.0)
+            if recorder_ready:
+                self.get_logger().info(
+                    f'[{ep_label}] bag recorder subscribed to {len(self.record_topics)} topics '
+                    f'in {time.time() - wait_start:.2f}s'
+                )
+            else:
+                missing = sorted(set(self.record_topics) - self._recorder_subscribed_topics())
+                self.get_logger().warn(
+                    f'[{ep_label}] bag recorder not subscribed to {missing} after 30s — starting anyway'
+                )
 
         # 5) traj_v_scale 갱신 (START 전에 박아두면 첫 plan부터 새 값 사용)
         # SetParameters 서비스는 reliable이라 단발 호출로 충분, 응답으로 성공 여부도 확인됨
-        if 'car1_v_scale' in ep:
+        if self.car1_planner and 'car1_v_scale' in ep:
             self._set_traj_v_scale(self.param_cli_car1, ep['car1_v_scale'], 'car1')
-        if self.head2head and 'car2_v_scale' in ep:
+        if self.head2head and self.car2_planner and 'car2_v_scale' in ep:
             self._set_traj_v_scale(self.param_cli_car2, ep['car2_v_scale'], 'car2')
 
         # 6) START → 첫 /car1/drive 메시지가 들어오는 순간을 t_start로 박음
         self._first_drive_sim_time = None
         self._waiting_for_first_drive = True
+        self._car2_first_drive_sim_time = None
+        self._watching_car2_first_drive = True
         self._collision_seen = False
         self._collision_source = None
         self._monitoring_collision = True
@@ -762,6 +857,7 @@ class EpisodeManagerNode(Node):
 
         # 7) STOP + bag flush
         self._monitoring_collision = False
+        self._watching_car2_first_drive = False
         self._publish_control('STOP')
         if bag_proc is not None:
             self._stop_bag_record(bag_proc)
@@ -770,6 +866,33 @@ class EpisodeManagerNode(Node):
         collided = self._collision_seen
         verdict = f'COLLISION ({self._collision_source})' if collided else 'CLEAN'
         if self.do_record:
+            first_drive = {'car1': self._first_drive_sim_time,
+                           'car2': self._car2_first_drive_sim_time}
+            try:
+                problems = self._bag_problems(staging_bag_path, t_start, t_end, first_drive)
+            except Exception as e:  # 검사 실패로 수집을 멈추진 않음 (validator가 다시 봄)
+                problems = []
+                self.get_logger().warn(f'[{ep_label}] bag check failed: {e}')
+            if problems and retry_left:
+                self.get_logger().warn(
+                    f'[{ep_label}] bag incomplete — {"; ".join(problems)} — discarding and retrying'
+                )
+                shutil.rmtree(staging_bag_path, ignore_errors=True)
+                return False
+            if problems:
+                self.get_logger().warn(f'[{ep_label}] bag incomplete, out of retries — {"; ".join(problems)}')
+            # validate_episodes.py가 bag이 [t_start, t_end]를 다 덮는지 확인하는 데 씀
+            try:
+                with open(os.path.join(staging_bag_path, 'episode_info.yaml'), 'w') as f:
+                    yaml.safe_dump({
+                        't_start': t_start, 't_end': t_end,
+                        'first_drive': first_drive,
+                        'verdict': 'collision' if collided else 'clean',
+                        'collision_source': self._collision_source,
+                        'recorder_ready': recorder_ready,
+                    }, f)
+            except OSError as e:
+                self.get_logger().error(f'[{ep_label}] episode_info.yaml write failed: {e}')
             target_root = self.collision_dir if collided else self.clean_dir
             final_path = os.path.join(target_root, os.path.basename(staging_bag_path))
             try:
@@ -780,6 +903,58 @@ class EpisodeManagerNode(Node):
             self.get_logger().info(f'[{ep_label}] {verdict} -> {final_path}')
         else:
             self.get_logger().info(f'[{ep_label}] {verdict} (no bag recorded)')
+        return True
+
+    # 토픽별 허용 오차(s): 시작/끝에서 빠져도 되는 길이, 중간 최대 간격
+    BAG_EDGE_TOL = {'drive': 0.02, 'odom': 0.02, 'scan': 0.1}
+    BAG_MAX_GAP = {'drive': 0.0205, 'odom': 0.0205, 'scan': 0.1}
+
+    def _bag_problems(self, bag_path, t_start, t_end, first_drive) -> list:
+        """녹화된 bag이 [t_start, t_end]를 끊김 없이 담았는지 확인.
+        레코더가 그래프상 구독을 마쳐도 DDS 매칭이 수 초 늦거나 아예 안 되는
+        경우가 있어(Foxy/Fast-DDS) 실제 저장된 메시지의 header stamp로 판단."""
+        dbs = [f for f in os.listdir(bag_path) if f.endswith('.db3')]
+        if not dbs:
+            return ['no .db3 file']
+        con = sqlite3.connect(os.path.join(bag_path, dbs[0]))
+        try:
+            topics = {name: (tid, typ) for tid, name, typ
+                      in con.execute('SELECT id, name, type FROM topics')}
+            problems = []
+            for topic in self.record_topics:
+                kind = topic.rsplit('/', 1)[-1]
+                if kind not in self.BAG_EDGE_TOL:
+                    continue
+                if topic not in topics:
+                    problems.append(f'{topic} missing')
+                    continue
+                tid, typ = topics[topic]
+                msg_cls = get_message(typ)
+                stamps = []
+                for (data,) in con.execute(
+                        'SELECT data FROM messages WHERE topic_id=? ORDER BY timestamp', (tid,)):
+                    st = deserialize_message(data, msg_cls).header.stamp
+                    stamps.append(st.sec + st.nanosec * 1e-9)
+                car = topic.strip('/').split('/')[0]
+                start = t_start
+                if kind == 'drive' and first_drive.get(car) is not None:
+                    start = first_drive[car]
+                # 끝 STOP 0-cmd 등 t_end 이후 메시지는 범위 밖이라 간격 계산에서 제외
+                inside = sorted(t for t in stamps if start - 1e-6 <= t <= t_end + 1e-6)
+                tol = self.BAG_EDGE_TOL[kind]
+                if not inside:
+                    problems.append(f'{topic} empty')
+                    continue
+                if inside[0] - start > tol:
+                    problems.append(f'{topic} head missing {inside[0] - start:.2f}s')
+                if t_end - inside[-1] > tol:
+                    problems.append(f'{topic} tail missing {t_end - inside[-1]:.2f}s')
+                gap = max((b - a for a, b in zip(inside, inside[1:])), default=0.0)
+                if gap > self.BAG_MAX_GAP[kind]:
+                    problems.append(f'{topic} gap {gap * 1000:.0f}ms')
+            return problems
+        finally:
+            con.close()
 
 
 def main(args=None):
