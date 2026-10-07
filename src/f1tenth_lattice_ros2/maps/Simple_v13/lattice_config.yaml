@@ -1,0 +1,110 @@
+# Simple_v13: generate_simple_augmented.py가 생성한 설정. simple_augmented_lattice_config.yaml에서
+# 스폰 좌표와 follow zone만 이 맵에 맞게 바꿨다.
+# Simple_augmented(트랙 폭 4.0 m, 직선 20.5 m) 시뮬레이션 수집 전용 설정.
+# 0812_head2head_100hz 데이터를 수집한 시뮬레이션 설정(커밋 0480f88 이전 lattice_config.yaml)을 기반으로 하며,
+# 스폰 좌표와 follow zone만 증강 레이스 라인(maps/Simple_augmented/raceline1.csv)에 맞게 바꿨다.
+# 현재 lattice_config.yaml은 실차 안정성용 튜닝(상대차 회피 가중치 0.0, lh_grid ±0.5)이라
+# head-to-head 수집에 쓰면 ego가 직선에서 선두차를 추돌한다.
+
+# === Global defaults ===
+get_follow_optim_cost: true
+get_map_collision: true
+get_similarity_cost: true
+weights_num: 4
+ittc_thres: 3.0
+scan_num: 144
+
+params_num:
+  - 1
+  - 4
+params_name:
+  - traj_v_scale
+  - cost_weights
+
+tracker_steps: 10
+vel_scale: 1.0
+
+minL: 0.2
+maxL: 1.8
+Lscale: 8.0
+minP: 0.5
+maxP: 0.8
+Pscale: 8.0
+D: 0.2
+interpScale: 10
+
+wpt_xind: 0
+wpt_yind: 1
+wpt_vind: 2
+
+# === Ego vehicle ===
+car1:
+  lh_grid_lb: 1.0
+  lh_grid_ub: 3.0
+  traj_points: 10
+  traj_v_scale: 1.0
+  traj_v_span_min: 0.1
+  traj_v_span_max: 1.0
+  traj_v_span_num: 19
+
+  spawn:
+    x: 3.90
+    y: 8.00
+    yaw_deg: 90.0
+  cost_weights:
+    - 0.1
+    - 10.0
+    - 0.003
+    - 300.0
+  minL: 0.2
+  maxL: 1.8
+  Lscale: 8.0
+  minP: 0.5
+  maxP: 0.8
+
+  # === 선두 차량 추종(following) 모드 ===
+  # 지정한 raceline 인덱스 구간(zones) 안에서, 선두차(car2)가 바로 앞에 근접하면
+  # lattice 추월을 멈추고 raceline 라인을 그대로 추종하며 차간거리(ACC)로 서행한다.
+  # zones를 비우거나(follow 키 자체 제거) car2에 follow가 없으면 비활성(기존 동작 유지).
+  follow:
+    zones:                    # raceline1.csv 행 인덱스 기준 following 활성 구간 목록
+      # raceline1의 코너 구간(진입 4행 전 ~ 출구 2행 후)
+      - { min: 91, max: 145 }
+      - { min: 235, max: 287 }
+      - { min: 0, max: 1 }
+    # car1은 car2보다 항상 빠르게 설정되므로 gap이 단조 감소 -> trigger/release
+    # 히스테리시스 없이 단일 거리 임계값으로 판정한다.
+    # car2가 car1 앞(트랙 진행방향)으로 lateral_align_m 이내에 있으면 following 진입/유지.
+    # lattice 회피 반응거리(~3m)와 car2 스폰 간격(~1~2m)보다 커야 follow가 추월을 선점함.
+    lateral_align_m: 3.0      # car2가 car1 앞 이 거리(m) 이내일 때 following
+    desired_gap_m: 1.5        # ACC 목표 차간거리 (차량 길이 0.58m 고려, lateral_align_m 보다 작게)
+    kp_gap: 0.8               # 차간거리 오차 -> 속도 보정 게인
+    max_follow_speed: 3.0     # following 시 속도 상한 (서행)
+    horizon_m: 3.0            # following 경로로 잘라 쓸 전방 raceline 길이 (>= lookahead 보장)
+
+
+# === Opponent vehicle ===
+car2:
+  lh_grid_lb: 1.0
+  lh_grid_ub: 2.0
+  traj_points: 10
+  traj_v_scale: 0.5
+  traj_v_span_min: 0.1
+  traj_v_span_max: 1.0
+  traj_v_span_num: 19
+
+  spawn:
+    x: 3.90
+    y: 12.00
+    yaw_deg: 90.0
+  cost_weights:
+    - 0.10
+    - 10.0
+    - 0.003
+    - 0.0
+  minL: 0.2
+  maxL: 1.8
+  Lscale: 8.0
+  minP: 0.5
+  maxP: 0.8
+

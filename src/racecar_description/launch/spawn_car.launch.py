@@ -36,8 +36,11 @@ def launch_setup(context, *args, **kwargs):
     # 맵에 따른 world 파일 선택
     if map_name in ['monza', 'silverstone', 'interlagos']:
         world_file_path = os.path.join(pkg_path, 'worlds', f'{map_name}_track.world')
-    elif map_name in ['monza_track', 'silverstone_track', 'interlagos_track', 'racecar_walker', 'simple', 'f110_competition','f110_racetrack']:
-        world_file_path = os.path.join(pkg_path, 'worlds', f'{map_name}.world')
+    elif map_name in ['monza_track', 'silverstone_track', 'interlagos_track', 'racecar_walker', 'simple', 'Simple_augmented', 'f110_competition','f110_racetrack']:
+        world_file_path = os.path.join(pkg_path, 'worlds', f'{map_name.lower()}.world')
+    elif os.path.exists(os.path.join(pkg_path, 'worlds', f'{map_name.lower()}.world')):
+        # generate_simple_augmented.py로 만든 Simple 변형 맵 (예: Simple_v01 -> simple_v01.world)
+        world_file_path = os.path.join(pkg_path, 'worlds', f'{map_name.lower()}.world')
     else:
         world_file_path = os.path.join(pkg_path, 'worlds', 'simple.world')
 
@@ -65,6 +68,29 @@ def launch_setup(context, *args, **kwargs):
             'robot_description': robot_description_content,
             'use_sim_time': True,
             'frame_prefix': namespace_val + '/' # TF 프레임 이름 앞에 네임스페이스 추가
+        }]
+    )
+
+    # robot_state_publisher does not emit TF for movable joints until the first
+    # JointState arrives.  Gazebo's joint-state plugin only starts publishing
+    # after the entity has been inserted (and can be absent on some installs),
+    # while RViz starts querying these frames immediately.  Gazebo's plugin is
+    # remapped to <ns>/joint_states_gz (see racecar.gazebo) and this node merges
+    # it into <ns>/joint_states, filling any joint Gazebo has not reported yet
+    # with a zero position.  It therefore seeds the frames without ever
+    # overwriting real simulation values.  use_sim_time must match
+    # robot_state_publisher, otherwise the wheel TFs carry wall-clock stamps.
+    node_joint_state_fallback = Node(
+        package='joint_state_publisher',
+        executable='joint_state_publisher',
+        namespace=namespace_val,
+        name='joint_state_fallback',
+        output='screen',
+        parameters=[{
+            'robot_description': robot_description_content,
+            'source_list': ['joint_states_gz'],
+            'rate': 30,
+            'use_sim_time': True,
         }]
     )
 
@@ -98,7 +124,7 @@ def launch_setup(context, *args, **kwargs):
         ]
     )
 
-    return [node_robot_state_publisher, gazebo, spawn_entity]
+    return [node_robot_state_publisher, node_joint_state_fallback, gazebo, spawn_entity]
 
 def generate_launch_description():
     declare_map_cmd = DeclareLaunchArgument('map', default_value='simple', description='Map name for setting world and poses')

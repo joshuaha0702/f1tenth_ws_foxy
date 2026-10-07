@@ -20,6 +20,10 @@ bag2gazebo_node가 받아 set_entity_state로 차량을 텔레포트함.
     ros2 launch f1tenth_lattice_ros2 gazebo_replay.launch.py \\
         bag:=<path> rate:=0.5
 
+맵 지정 (bag 경로에 Simple_vNN 같은 맵 이름이 있으면 자동 추론, 없으면 simple):
+    ros2 launch f1tenth_lattice_ros2 gazebo_replay.launch.py \\
+        bag:=<path> gazebo:=true map:=Simple_v02
+
 RViz만 실행 (Gazebo 생략):
     ros2 launch f1tenth_lattice_ros2 gazebo_replay.launch.py \\
         bag:=<path> gazebo:=false
@@ -27,6 +31,7 @@ RViz만 실행 (Gazebo 생략):
 
 import math
 import os
+import re
 import yaml
 
 from ament_index_python.packages import get_package_share_directory
@@ -35,11 +40,12 @@ from launch.actions import (
     DeclareLaunchArgument,
     ExecuteProcess,
     IncludeLaunchDescription,
+    OpaqueFunction,
     TimerAction,
 )
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command, LaunchConfiguration
+from launch.substitutions import Command, LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -77,6 +83,13 @@ def generate_launch_description():
         description='Gazebo 시뮬레이터 실행 여부 (false면 RViz로만 재생)'
     )
     gazebo = LaunchConfiguration('gazebo')
+    seed_joint_states_arg = DeclareLaunchArgument(
+        'seed_joint_states',
+        default_value='false',
+        description='bag에 /carN/joint_states가 없을 때만 true. '
+                    'true면 joint_state_publisher가 0 위치를 1 Hz로 내보내 바퀴 TF를 만든다.'
+    )
+    seed_joint_states = LaunchConfiguration('seed_joint_states')
 
     # 이전 Gazebo 프로세스 정리 (gazebo:=false면 스킵)
     kill_gazebo = ExecuteProcess(
@@ -87,42 +100,73 @@ def generate_launch_description():
         output='screen'
     )
 
-    # Gazebo + car1 스폰 (gazebo:=false면 스킵)
-    spawn_car1 = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(description_pkg, 'launch', 'spawn_car.launch.py')
-        ),
-        condition=IfCondition(gazebo),
-        launch_arguments={
-            'namespace': 'car1',
-            'x': str(_s1.get('x', 6.4)),
-            'y': str(_s1.get('y', 16.0)),
-            'yaw': deg2rad(_s1.get('yaw_deg', -90.0)),
-            'color': 'blue',
-        }.items()
+    map_arg = DeclareLaunchArgument(
+        'map',
+        default_value='',
+        description='Gazebo world 맵 이름 (예: Simple_v02). 비우면 bag 경로에서 '
+                    'maps/ 아래 맵 이름을 찾아 쓰고, 못 찾으면 simple'
     )
 
-    # car2 스폰 (Gazebo는 이미 실행 중, gazebo:=false면 스킵)
-    spawn_car2 = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(description_pkg, 'launch', 'spawn_car.launch.py')
-        ),
-        condition=IfCondition(gazebo),
-        launch_arguments={
-            'namespace': 'car2',
-            'x': str(_s2.get('x', 6.4)),
-            'y': str(_s2.get('y', 12.0)),
-            'yaw': deg2rad(_s2.get('yaw_deg', -90.0)),
-            'launch_gazebo': 'false',
-            'color': 'orange',
-        }.items()
-    )
+    def resolve_map(context):
+        map_name = LaunchConfiguration('map').perform(context)
+        if map_name:
+            return map_name
+        # bag은 녹화한 맵 좌표계 그대로이므로 world가 다르면 차가 트랙 밖에서 달리는 것처럼 보인다.
+        # data/simple_variants_h2h/Simple_v02/clean/... 처럼 경로에 맵 이름이 들어있으면 그걸 쓴다.
+        known = set(os.listdir(os.path.join(lattice_pkg, 'maps')))
+        bag_path = os.path.abspath(LaunchConfiguration('bag').perform(context))
+        for part in reversed(bag_path.split(os.sep)):
+            if part in known:
+                return part
+            m = re.match(r'(Simple_v\d+)', part)
+            if m and m.group(1) in known:
+                return m.group(1)
+        return 'simple'
+
+    def spawn_cars(context):
+        map_name = resolve_map(context)
+        print(f'[replay] Gazebo world map: {map_name}')
+
+        # Gazebo + car1 스폰
+        spawn_car1 = IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(description_pkg, 'launch', 'spawn_car.launch.py')
+            ),
+            launch_arguments={
+                'namespace': 'car1',
+                'map': map_name,
+                'x': str(_s1.get('x', 6.4)),
+                'y': str(_s1.get('y', 16.0)),
+                'yaw': deg2rad(_s1.get('yaw_deg', -90.0)),
+                'color': 'blue',
+            }.items()
+        )
+
+        # car2 스폰 (Gazebo는 이미 실행 중)
+        spawn_car2 = IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(description_pkg, 'launch', 'spawn_car.launch.py')
+            ),
+            launch_arguments={
+                'namespace': 'car2',
+                'map': map_name,
+                'x': str(_s2.get('x', 6.4)),
+                'y': str(_s2.get('y', 12.0)),
+                'yaw': deg2rad(_s2.get('yaw_deg', -90.0)),
+                'launch_gazebo': 'false',
+                'color': 'orange',
+            }.items()
+        )
+        return [spawn_car1, spawn_car2]
+
+    # gazebo:=false면 스킵
+    spawn_cars_action = OpaqueFunction(function=spawn_cars, condition=IfCondition(gazebo))
 
     # gazebo:=false일 때는 spawn_car.launch.py(=robot_state_publisher+Gazebo+spawn_entity) 대신
-    # robot_state_publisher만 단독 실행해서 RViz가 RobotModel/TF를 그릴 수 있게 함
+    # state publisher들만 실행해서 RViz가 RobotModel/TF를 그릴 수 있게 함
     xacro_file = os.path.join(description_pkg, 'urdf', 'racecar.xacro')
 
-    def robot_state_publisher(namespace, color, visualize_lidar):
+    def state_publishers(namespace, color, visualize_lidar):
         robot_description_content = ParameterValue(
             Command(['xacro ', xacro_file,
                      ' namespace:=', namespace,
@@ -130,7 +174,7 @@ def generate_launch_description():
                      ' visualize_lidar:=', visualize_lidar]),
             value_type=str
         )
-        return Node(
+        robot_state_publisher = Node(
             package='robot_state_publisher',
             executable='robot_state_publisher',
             namespace=namespace,
@@ -143,8 +187,31 @@ def generate_launch_description():
             }]
         )
 
-    rsp_car1 = robot_state_publisher('car1', 'blue', 'true')
-    rsp_car2 = robot_state_publisher('car2', 'orange', 'false')
+        # A RobotModel asks TF for every movable URDF link immediately, but the
+        # bag does not start until several seconds later.  Bags that contain
+        # /carN/joint_states need no seed — a 1 Hz zero-position publisher would
+        # just fight the recorded values — so this is opt-in via
+        # seed_joint_states:=true for bags recorded without joint_states.
+        # use_sim_time must match robot_state_publisher; with wall-clock stamps
+        # the wheel TFs are unusable once the bag's /clock takes over.
+        joint_state_publisher = Node(
+            package='joint_state_publisher',
+            executable='joint_state_publisher',
+            namespace=namespace,
+            output='screen',
+            condition=IfCondition(PythonExpression(
+                ['"', gazebo, '".lower() not in ("1", "true") and "',
+                 seed_joint_states, '".lower() in ("1", "true")'])),
+            parameters=[{
+                'robot_description': robot_description_content,
+                'rate': 1,
+                'use_sim_time': True,
+            }]
+        )
+        return robot_state_publisher, joint_state_publisher
+
+    rsp_car1, jsp_car1 = state_publishers('car1', 'blue', 'true')
+    rsp_car2, jsp_car2 = state_publishers('car2', 'orange', 'false')
 
     # bag의 odom을 받아 Gazebo 모델 위치를 업데이트하는 브리지 노드 (gazebo:=false면 스킵)
     bag2gazebo = Node(
@@ -190,7 +257,11 @@ def generate_launch_description():
 
     delayed_spawn = TimerAction(
         period=1.5,
-        actions=[spawn_car1, spawn_car2, rsp_car1, rsp_car2, map_to_odom1, map_to_odom2, rviz_node]
+        actions=[
+            spawn_cars_action,
+            rsp_car1, rsp_car2, jsp_car1, jsp_car2,
+            map_to_odom1, map_to_odom2, rviz_node,
+        ]
     )
 
     delayed_bridge = TimerAction(
@@ -230,6 +301,8 @@ def generate_launch_description():
         bag_arg,
         rate_arg,
         gazebo_arg,
+        seed_joint_states_arg,
+        map_arg,
         kill_gazebo,
         delayed_spawn,
         delayed_bridge,

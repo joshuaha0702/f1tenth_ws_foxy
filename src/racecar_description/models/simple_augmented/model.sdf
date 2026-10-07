@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<sdf version="1.4">
+  <model name="simple_augmented">
+    <static>1</static>
+    <link name="walls">
+      <collision name="collision">
+        <geometry><mesh><uri>model://racecar_description/meshes/simple_augmented.stl</uri></mesh></geometry>
+      </collision>
+      <visual name="visual">
+        <geometry><mesh><uri>model://racecar_description/meshes/simple_augmented.stl</uri></mesh></geometry>
+      </visual>
+    </link>
+  </model>
+</sdf>

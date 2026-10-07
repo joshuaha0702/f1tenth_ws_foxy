@@ -1,0 +1,35 @@
+# Simple 트랙 수치 증강 변형 목록. tools/generate_simple_variants.py가 읽어서
+# maps/<name>/, racecar_description/meshes/<name 소문자>.stl, worlds/<name 소문자>.world를 생성한다.
+#
+# track_width:     명목 트랙 폭 (m). 원본 Simple 약 3.2 m
+# straight_length: 두 코너 중심 사이 직선 길이 (m). 원본 Simple 약 16 m
+# wall_amplitude:  벽 굴곡의 최대 변위 (m). 안쪽/바깥쪽 벽이 독립적으로 흔들려 국소 폭이 달라진다. 0이면 매끈한 벽
+# min_wavelength:  굴곡의 최소 파장 (m). 파장 상한은 12 m
+# seed:            굴곡 난수 시드
+#
+# 생성기는 국소 폭 >= 2.8 m, 레이스 라인 벽 여유 >= 0.6 m를 만족하지 않으면 실패한다.
+
+defaults:
+  min_wavelength: 4.0
+
+variants:
+  - { name: Simple_v01, track_width: 3.2, straight_length: 16.0, wall_amplitude: 0.00, seed: 1 }
+  - { name: Simple_v02, track_width: 3.2, straight_length: 20.0, wall_amplitude: 0.20, seed: 2 }
+  - { name: Simple_v03, track_width: 3.4, straight_length: 18.0, wall_amplitude: 0.25, seed: 3 }
+  - { name: Simple_v04, track_width: 3.4, straight_length: 24.0, wall_amplitude: 0.15, seed: 4, min_wavelength: 6.0 }
+  - { name: Simple_v05, track_width: 3.6, straight_length: 16.0, wall_amplitude: 0.30, seed: 5 }
+  - { name: Simple_v06, track_width: 3.6, straight_length: 22.0, wall_amplitude: 0.00, seed: 6 }
+  - { name: Simple_v07, track_width: 3.6, straight_length: 28.0, wall_amplitude: 0.20, seed: 7, min_wavelength: 6.0 }
+  - { name: Simple_v08, track_width: 3.8, straight_length: 18.0, wall_amplitude: 0.35, seed: 8 }
+  - { name: Simple_v09, track_width: 3.8, straight_length: 25.0, wall_amplitude: 0.25, seed: 9 }
+  - { name: Simple_v10, track_width: 4.0, straight_length: 16.0, wall_amplitude: 0.20, seed: 10, min_wavelength: 6.0 }
+  - { name: Simple_v11, track_width: 4.0, straight_length: 20.5, wall_amplitude: 0.30, seed: 11 }
+  - { name: Simple_v12, track_width: 4.0, straight_length: 26.0, wall_amplitude: 0.40, seed: 12 }
+  - { name: Simple_v13, track_width: 4.2, straight_length: 19.0, wall_amplitude: 0.15, seed: 13 }
+  - { name: Simple_v14, track_width: 4.2, straight_length: 23.0, wall_amplitude: 0.35, seed: 14, min_wavelength: 6.0 }
+  - { name: Simple_v15, track_width: 4.4, straight_length: 17.0, wall_amplitude: 0.40, seed: 15 }
+  - { name: Simple_v16, track_width: 4.4, straight_length: 27.0, wall_amplitude: 0.20, seed: 16 }
+  - { name: Simple_v17, track_width: 4.6, straight_length: 21.0, wall_amplitude: 0.30, seed: 17, min_wavelength: 6.0 }
+  - { name: Simple_v18, track_width: 4.6, straight_length: 24.5, wall_amplitude: 0.00, seed: 18 }
+  - { name: Simple_v19, track_width: 4.8, straight_length: 18.5, wall_amplitude: 0.25, seed: 19 }
+  - { name: Simple_v20, track_width: 4.8, straight_length: 28.0, wall_amplitude: 0.40, seed: 20 }
