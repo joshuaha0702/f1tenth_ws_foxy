@@ -73,9 +73,10 @@ def generate_launch_description():
     )
 
     # Lattice 플래너 노드 — car2 (정속 주행, opponent tracking 없음)
-    lattice_config_path = os.path.join(lattice_pkg, 'config', 'lattice_config.yaml')
-    lattice_map_path = os.path.join(lattice_pkg, 'maps', 'Simple_map')
-    lattice_raceline_path = os.path.join(lattice_pkg, 'maps', 'raceline1.csv')
+    # 맵은 maps/<map>/ 폴더 구조, config는 평가 launch(f1tenth_lattice_gazebo)와 동일한 sim 설정 사용
+    lattice_config_path = os.path.join(lattice_pkg, 'config', 'sim_lattice_config.yaml')
+    lattice_map_path = os.path.join(lattice_pkg, 'maps', 'Simple', 'Simple_map')
+    lattice_raceline_path = os.path.join(lattice_pkg, 'maps', 'Simple', 'raceline1.csv')
 
     lattice_node_car2 = Node(
         package='f1tenth_lattice_ros2',
@@ -90,6 +91,24 @@ def generate_launch_description():
             'max_speed': 2.0,
             'max_steering_angle': 0.4189,
             'opponent_namespace': '',
+            'use_sim_time': True,
+        }],
+        condition=IfCondition(car2_enabled)
+    )
+
+    # Pure Pursuit 제어기 — car2 (플래너와 분리된 프로세스가 /car2/drive를 publish)
+    controller_node_car2 = Node(
+        package='f1tenth_lattice_ros2',
+        executable='pure_pursuit_controller_node',
+        name='pure_pursuit_controller',
+        namespace='car2',
+        output='screen',
+        parameters=[{
+            'config_path': lattice_config_path,
+            'raceline_path': lattice_raceline_path,
+            'max_speed': 2.0,
+            'max_steering_angle': 0.4189,
+            'use_sim_time': True,
         }],
         condition=IfCondition(car2_enabled)
     )
@@ -166,7 +185,7 @@ def generate_launch_description():
         period=2.0,
         actions=[
             spawn_car_launch, agent_node, bridge_node, rviz_node, map_to_odom_node, laser_tf_node,
-            spawn_car2_launch, lattice_node_car2, bridge_node_car2,
+            spawn_car2_launch, lattice_node_car2, controller_node_car2, bridge_node_car2,
             map_to_odom_node_car2, laser_tf_node_car2,
         ]
     )

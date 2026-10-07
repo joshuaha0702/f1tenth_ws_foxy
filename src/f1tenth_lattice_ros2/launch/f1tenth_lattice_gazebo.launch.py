@@ -38,10 +38,12 @@ def generate_launch_description():
     lattice_pkg = get_package_share_directory('f1tenth_lattice_ros2')
     description_pkg = get_package_share_directory('racecar_description')
 
-    # config:= 인자로 사용자 지정 lattice_config.yaml 경로를 받을 수 있음.
+    # config:= 인자로 사용자 지정 lattice config 경로를 받을 수 있음.
     # LaunchConfiguration은 이 시점에 아직 해석되지 않으므로 argv에서 직접 파싱하여
     # 스폰 좌표 기본값도 지정한 config 기준으로 읽는다.
-    _default_config_path = os.path.join(lattice_pkg, 'config', 'lattice_config.yaml')
+    # 기본값은 시뮬 수집 전용 sim_lattice_config.yaml — lattice_config.yaml은 실차 튜닝본이라
+    # 시뮬에 쓰면 head-to-head 추돌과 라벨 정책 변화가 생긴다.
+    _default_config_path = os.path.join(lattice_pkg, 'config', 'sim_lattice_config.yaml')
     _config_path = _argv_value('config', _default_config_path)
     # Read spawn defaults from config at launch-description-generation time
     with open(_config_path) as _f:
@@ -145,7 +147,7 @@ def generate_launch_description():
     config_arg = DeclareLaunchArgument(
         'config',
         default_value=_default_config_path,
-        description='lattice_config.yaml 경로 (스폰 좌표 기본값도 이 파일에서 읽음)'
+        description='lattice config 경로 (기본 sim_lattice_config.yaml; 스폰 좌표 기본값도 이 파일에서 읽음)'
     )
     config_path = LaunchConfiguration('config')
     # Use PythonExpression to dynamically build the path since we are grouping them in folders: maps/<map_name>/<map_name>_map
@@ -174,6 +176,65 @@ def generate_launch_description():
     )
     raceline_path = LaunchConfiguration('raceline')
 
+    # car1(ego)/car2(leader) 주행 주체: 'lattice'(데이터 수집, 기본) 또는 'end2race'(학습 모델 평가).
+    leader_arg = DeclareLaunchArgument(
+        'leader',
+        default_value='lattice',
+        description="car2 주행 주체: lattice (planner + Pure Pursuit) 또는 end2race (leader_model)"
+    )
+    leader_model_arg = DeclareLaunchArgument(
+        'leader_model',
+        default_value='',
+        description='leader:=end2race일 때 불러올 End2Race 가중치(.pth) 경로 (필수: '
+                    '비어 있거나 없는 경로면 agent_node가 랜덤 가중치로 주행하지 않고 즉시 종료함)'
+    )
+    leader_is_lattice = PythonExpression(['"', LaunchConfiguration('leader'), '" == "lattice"'])
+    leader_is_end2race = PythonExpression(['"', LaunchConfiguration('leader'), '" == "end2race"'])
+    ego_arg = DeclareLaunchArgument(
+        'ego',
+        default_value='lattice',
+        description="car1 주행 주체: lattice (planner + Pure Pursuit) 또는 end2race (ego_model)"
+    )
+    ego_model_arg = DeclareLaunchArgument(
+        'ego_model',
+        default_value='',
+        description='ego:=end2race일 때 불러올 End2Race 가중치(.pth) 경로 (필수: '
+                    '비어 있거나 없는 경로면 agent_node가 랜덤 가중치로 주행하지 않고 즉시 종료함)'
+    )
+    ego_is_lattice = PythonExpression(['"', LaunchConfiguration('ego'), '" == "lattice"'])
+    ego_is_end2race = PythonExpression(['"', LaunchConfiguration('ego'), '" == "end2race"'])
+
+    # End2Race 패키지는 모델 평가에만 필요하므로, 설치되지 않은 워크스페이스에서도
+    # 데이터 수집 launch가 동작하도록 선택적으로 찾는다.
+    try:
+        _end2race_config = os.path.join(
+            get_package_share_directory('f1tenth_end2race_ros2'), 'config', 'end2race_config.yaml')
+    except Exception:
+        _end2race_config = None
+
+    def end2race_agent(robot, model, condition):
+        # 학습 데이터와 같게 odom마다(sim time 100 Hz) 추론하고, 속도 배율은 학습 그대로(1.0).
+        if _end2race_config is None:
+            return []
+        return [Node(
+            package='f1tenth_end2race_ros2',
+            executable='agent_node',
+            name=f'end2race_{robot}',
+            output='screen',
+            condition=IfCondition(condition),
+            parameters=[_end2race_config, {
+                'use_sim_time': True,
+                'robot_name': robot,
+                'model_path': model,
+                'trigger': 'odom',
+                'control': {'speed_scale': 1.0},
+            }],
+        )]
+
+    end2race_actions = end2race_agent('car1', LaunchConfiguration('ego_model'), ego_is_end2race)
+    leader_end2race_actions = end2race_agent(
+        'car2', LaunchConfiguration('leader_model'), leader_is_end2race)
+
     # Lattice planner node — car1
     lattice_node = Node(
         package='f1tenth_lattice_ros2',
@@ -181,6 +242,7 @@ def generate_launch_description():
         name='lattice_planner',
         namespace='car1',
         output='screen',
+        condition=IfCondition(ego_is_lattice),
         parameters=[{
             'config_path': config_path,
             'raceline_path': raceline_path,
@@ -198,6 +260,7 @@ def generate_launch_description():
         name='pure_pursuit_controller',
         namespace='car1',
         output='screen',
+        condition=IfCondition(ego_is_lattice),
         parameters=[{
             'config_path': config_path,
             'raceline_path': raceline_path,
@@ -223,6 +286,7 @@ def generate_launch_description():
         name='lattice_planner',
         namespace='car2',
         output='screen',
+        condition=IfCondition(leader_is_lattice),
         parameters=[{
             'config_path': config_path,
             'raceline_path': raceline_path,
@@ -240,6 +304,7 @@ def generate_launch_description():
         name='pure_pursuit_controller',
         namespace='car2',
         output='screen',
+        condition=IfCondition(leader_is_lattice),
         parameters=[{
             'config_path': config_path,
             'raceline_path': raceline_path,
@@ -258,11 +323,16 @@ def generate_launch_description():
         output='screen'
     )
 
-    # RViz2 with existing config (headless 시 비활성화) — stderr 버려서 TF 경고 제거
+    # RViz2 with existing config (headless 시 비활성화).
+    # Keep stderr visible: suppressing it hides X11/OpenGL errors and makes a
+    # running-but-invisible GUI impossible to diagnose.
     _rviz_cfg = os.path.join(description_pkg, 'rviz', 'f1tenth_default.rviz')
-    rviz_node = ExecuteProcess(
-        cmd=['bash', '-c', f'exec rviz2 -d "{_rviz_cfg}" 2>/dev/null'],
-        output='log',
+    rviz_node = Node(
+        package='rviz2',
+        executable='rviz2',
+        name='rviz2',
+        arguments=['-d', _rviz_cfg],
+        output='screen',
         condition=UnlessCondition(headless)
     )
 
@@ -353,6 +423,7 @@ def generate_launch_description():
             spawn_car2_launch,
             lattice_node_car2,
             controller_node_car2,
+            *leader_end2race_actions,
             bridge_node_car2,
             map_to_odom_node_car2,
             laser_tf_node_car2,
@@ -374,6 +445,8 @@ def generate_launch_description():
             'episodes_yaml': LaunchConfiguration('episodes'),
             'head2head': LaunchConfiguration('head2head'),
             'record': LaunchConfiguration('episode_record'),
+            'car1_planner': ego_is_lattice,
+            'car2_planner': leader_is_lattice,
             'use_sim_time': True,
         }]
     )
@@ -385,8 +458,11 @@ def generate_launch_description():
             spawn_car_launch,
             lattice_node,
             controller_node,
+            *end2race_actions,
             bridge_node,
-            rviz_node,
+            # Let robot/joint state publishers seed every URDF frame before
+            # RobotModel starts querying TF, avoiding startup warning floods.
+            TimerAction(period=1.0, actions=[rviz_node]),
             map_to_odom_node,
             laser_tf_node,
             car2_group,
@@ -419,6 +495,10 @@ def generate_launch_description():
         bag_output_arg,
         episodes_arg,
         cleanup_gazebo_arg,
+        ego_arg,
+        ego_model_arg,
+        leader_arg,
+        leader_model_arg,
         # gazebo.launch.py also uses ``record``. Preserve the user's data-bag
         # setting under a private key before any included launch executes.
         SetLaunchConfiguration(
