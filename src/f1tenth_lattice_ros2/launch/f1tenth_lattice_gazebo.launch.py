@@ -9,10 +9,13 @@ from launch.actions import (
     ExecuteProcess,
     GroupAction,
     IncludeLaunchDescription,
+    RegisterEventHandler,
     SetLaunchConfiguration,
+    Shutdown,
     TimerAction,
 )
 from launch.conditions import IfCondition, UnlessCondition
+from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
@@ -201,6 +204,17 @@ def generate_launch_description():
         description='ego:=end2race일 때 불러올 End2Race 가중치(.pth) 경로 (필수: '
                     '비어 있거나 없는 경로면 agent_node가 랜덤 가중치로 주행하지 않고 즉시 종료함)'
     )
+    # End2Race 모델의 속도 입력: command(직전 출력 명령, 기존 모델) 또는 odom(측정 속도,
+    # train.py --speed_input odom으로 학습한 모델) 또는 hybrid([odom, 직전 출력], --speed_input hybrid).
+    # 모델이 학습된 방식과 같아야 한다.
+    ego_speed_input_arg = DeclareLaunchArgument(
+        'ego_speed_input', default_value='command',
+        description='ego:=end2race 모델의 속도 입력: command, odom 또는 hybrid'
+    )
+    leader_speed_input_arg = DeclareLaunchArgument(
+        'leader_speed_input', default_value='command',
+        description='leader:=end2race 모델의 속도 입력: command, odom 또는 hybrid'
+    )
     ego_is_lattice = PythonExpression(['"', LaunchConfiguration('ego'), '" == "lattice"'])
     ego_is_end2race = PythonExpression(['"', LaunchConfiguration('ego'), '" == "end2race"'])
 
@@ -212,7 +226,7 @@ def generate_launch_description():
     except Exception:
         _end2race_config = None
 
-    def end2race_agent(robot, model, condition):
+    def end2race_agent(robot, model, condition, speed_input):
         # 학습 데이터와 같게 odom마다(sim time 100 Hz) 추론하고, 속도 배율은 학습 그대로(1.0).
         if _end2race_config is None:
             return []
@@ -227,13 +241,16 @@ def generate_launch_description():
                 'robot_name': robot,
                 'model_path': model,
                 'trigger': 'odom',
+                'speed_input': speed_input,
                 'control': {'speed_scale': 1.0},
             }],
         )]
 
-    end2race_actions = end2race_agent('car1', LaunchConfiguration('ego_model'), ego_is_end2race)
+    end2race_actions = end2race_agent('car1', LaunchConfiguration('ego_model'), ego_is_end2race,
+                                      LaunchConfiguration('ego_speed_input'))
     leader_end2race_actions = end2race_agent(
-        'car2', LaunchConfiguration('leader_model'), leader_is_end2race)
+        'car2', LaunchConfiguration('leader_model'), leader_is_end2race,
+        LaunchConfiguration('leader_speed_input'))
 
     # Lattice planner node — car1
     lattice_node = Node(
@@ -380,6 +397,12 @@ def generate_launch_description():
         default_value='',
         description='다중 에피소드 yaml 경로. 지정하면 episode_manager가 녹화를 인계받음.'
     )
+    start_episode_arg = DeclareLaunchArgument(
+        'start_episode',
+        default_value='0',
+        description='이 인덱스 미만 에피소드는 건너뜀 (에피소드 목록/seed는 그대로). '
+                    'drive 체인 고장으로 중단된 맵을 이어서 수집할 때 run_episodes.sh가 지정'
+    )
 
     # 단일 에피소드(기존) 녹화: record=true 이고 episodes가 비어있을 때만 동작
     # PythonExpression으로 "record true && episodes empty" 조건을 만듦
@@ -447,9 +470,22 @@ def generate_launch_description():
             'record': LaunchConfiguration('episode_record'),
             'car1_planner': ego_is_lattice,
             'car2_planner': leader_is_lattice,
+            'start_episode': LaunchConfiguration('start_episode'),
             'use_sim_time': True,
         }]
     )
+
+    # episode_manager가 비정상 종료(yaml 오류, drive 체인 고장으로 맵 중단)하면 launch
+    # 전체를 끝낸다. 정상 종료(모든 에피소드 완료) 시에는 기존처럼 launch를 유지.
+    def _shutdown_on_manager_failure(event, context):
+        if event.returncode != 0:
+            return [Shutdown(reason=f'episode_manager exited with code {event.returncode}')]
+        return []
+
+    episode_manager_exit_handler = RegisterEventHandler(OnProcessExit(
+        target_action=episode_manager_node,
+        on_exit=_shutdown_on_manager_failure,
+    ))
 
     # 가제보 정리 후 1.5초 대기 후 나머지 노드 시작
     delayed_launch = TimerAction(
@@ -494,11 +530,14 @@ def generate_launch_description():
         record_arg,
         bag_output_arg,
         episodes_arg,
+        start_episode_arg,
         cleanup_gazebo_arg,
         ego_arg,
         ego_model_arg,
         leader_arg,
         leader_model_arg,
+        ego_speed_input_arg,
+        leader_speed_input_arg,
         # gazebo.launch.py also uses ``record``. Preserve the user's data-bag
         # setting under a private key before any included launch executes.
         SetLaunchConfiguration(
@@ -506,5 +545,6 @@ def generate_launch_description():
         ),
         kill_gazebo,
         delayed_launch,
+        episode_manager_exit_handler,
         delayed_manager,
     ])

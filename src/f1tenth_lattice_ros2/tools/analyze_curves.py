@@ -101,6 +101,7 @@ def main():
     parser.add_argument('runs', nargs='+')
     parser.add_argument('--maps-dir', default=os.path.join(os.path.dirname(__file__), '..', 'maps'))
     parser.add_argument('--solo-gap', type=float, default=4.0)
+    parser.add_argument('--maps', nargs='*', default=None, help='only these maps')
     args = parser.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
     typestore = make_typestore()
@@ -113,9 +114,11 @@ def main():
     results = {}
     for run in args.runs:
         acc = {}
-        for map_dir in sorted(glob.glob(os.path.join(run, 'Simple*', ''))):
+        for map_dir in sorted(glob.glob(os.path.join(run, '*', ''))):
             name = os.path.basename(os.path.dirname(map_dir))
             rl_path = os.path.join(args.maps_dir, name, 'raceline1.csv')
+            if name == 'logs' or not os.path.exists(rl_path) or (args.maps and name not in args.maps):
+                continue
             track = load_raceline(rl_path)
             raw = np.loadtxt(rl_path, delimiter=';', comments='#')
             kappa_track = raw[:len(track[0]), 4]
@@ -174,6 +177,8 @@ def main():
     for ax, name in zip(axes[:, 0], maps):
         for ci, (run, r) in enumerate(results.items()):
             sel = r['map'] == name
+            if sel.sum() < 10:
+                continue
             s_, lat_, kap = r['s'][sel], r['lat'][sel], r['kappa'][sel]
             bins = np.arange(0, s_.max() + 0.2, 0.2)
             which = np.digitize(s_, bins)
@@ -184,7 +189,7 @@ def main():
             ax.plot(bins[:-1], mean * 100, color=c, label=f'{run} mean')
             ax.fill_between(bins[:-1], p10 * 100, p90 * 100, color=c, alpha=0.15)
         ax2 = ax.twinx()
-        r0 = next(iter(results.values()))
+        r0 = next(r for r in results.values() if (r['map'] == name).any())
         sel = r0['map'] == name
         order = np.argsort(r0['s'][sel])
         ax2.plot(r0['s'][sel][order], r0['kappa'][sel][order], color='k', lw=0.6, alpha=0.5)

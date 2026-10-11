@@ -25,6 +25,11 @@ live (first_drive, falling back to t_start) and the last drive at
 most that before t_end, for both verdicts. Older bags without the file skip
 this check (head_missing_s / tail_missing_s left empty).
 
+Motion: path_m is the odom path length over the episode (t_start..t_end, whole
+bag without episode_info.yaml). A car is stuck when path_m < MIN_MOTION_M while
+its mean commanded drive speed exceeds MIN_CMD_SPEED (drive chain dead: commands
+go out but the car does not move); a stuck car is never usable.
+
     validate_episodes.py <bag glob> [--cars car1 car2] [--summary out.csv]
 """
 
@@ -54,7 +59,9 @@ ackermann_msgs/AckermannDrive drive
 PERIOD_NS = 10_000_000          # 100 Hz
 GAP_TOLERANCE_NS = 1_000_000    # a dt above 11 ms counts as a missed control step
 COVERAGE_TOLERANCE_S = 0.02     # head/tail of the episode the bag may miss (2 steps)
-FIELDS = ['bag', 'car', 'strict', 'usable', 'reason', 'drive_n', 'odom_n', 'rate_hz',
+MIN_MOTION_M = 1.0              # path shorter than this while commanded to drive = stuck
+MIN_CMD_SPEED = 0.5             # m/s, mean commanded speed above which the car should move
+FIELDS = ['bag', 'car', 'strict', 'usable', 'reason', 'path_m', 'stuck', 'drive_n', 'odom_n', 'rate_hz',
           'dt_mean_ms', 'dt_std_ms', 'dt_min_ms', 'dt_max_ms', 'dup', 'backward', 'gaps',
           'controller_miss', 'sim_odom_gaps', 'odom_max_dt_ms', 'odom_match',
           'unrecorded_odom_drives', 'span_s', 'head_missing_s', 'tail_missing_s', 'scan_hz', 'rtf']
@@ -77,7 +84,9 @@ def read_bag(path, cars, typestore):
     for car in cars:
         for kind in ('drive', 'odom', 'scan'):
             topics[f'/{car}/{kind}'] = (car, kind)
-    data = {car: {'drive': [], 'odom': [], 'scan': []} for car in cars}
+    # odom_pos: (stamp_ns, x, y), drive_speed: (stamp_ns, commanded speed)
+    data = {car: {'drive': [], 'odom': [], 'scan': [], 'odom_pos': [], 'drive_speed': []}
+            for car in cars}
     clock_wall, clock_sim = [], []
     with Reader(path) as reader:
         for conn, bag_ns, raw in reader.messages():
@@ -88,16 +97,41 @@ def read_bag(path, cars, typestore):
             elif conn.topic in topics:
                 car, kind = topics[conn.topic]
                 msg = typestore.deserialize_cdr(raw, conn.msgtype)
-                data[car][kind].append(stamp_ns(msg.header.stamp))
+                t = stamp_ns(msg.header.stamp)
+                data[car][kind].append(t)
+                if kind == 'odom':
+                    p = msg.pose.pose.position
+                    data[car]['odom_pos'].append((t, p.x, p.y))
+                elif kind == 'drive':
+                    data[car]['drive_speed'].append((t, msg.drive.speed))
     return data, np.array(clock_wall, dtype=np.int64), np.array(clock_sim, dtype=np.int64)
+
+
+def check_motion(streams, episode=None):
+    """Odom path length (m) and mean |commanded speed| (m/s) inside the episode window."""
+    lo, hi = -np.inf, np.inf
+    if episode is not None:
+        lo = float(episode['t_start']) * 1e9 - 1e3
+        hi = float(episode['t_end']) * 1e9 + 1e3
+    pos = sorted(p for p in streams.get('odom_pos', []) if lo <= p[0] <= hi)
+    xy = np.array([(x, y) for _, x, y in pos], dtype=float).reshape(-1, 2)
+    path = float(np.hypot(*np.diff(xy, axis=0).T).sum()) if len(xy) > 1 else 0.0
+    speeds = [abs(v) for t, v in streams.get('drive_speed', []) if lo <= t <= hi]
+    cmd = float(np.mean(speeds)) if speeds else 0.0
+    return path, cmd
 
 
 def check_car(streams, episode=None, car=None):
     drive = np.array(streams['drive'], dtype=np.int64)
     odom = np.array(sorted(set(streams['odom'])), dtype=np.int64)
-    res = {'drive_n': len(drive), 'odom_n': len(odom)}
+    path_m, cmd_speed = check_motion(streams, episode)
+    stuck = path_m < MIN_MOTION_M and cmd_speed > MIN_CMD_SPEED
+    stuck_reason = f'stuck (moved {path_m:.2f} m, commanded {cmd_speed:.1f} m/s)'
+    res = {'drive_n': len(drive), 'odom_n': len(odom), 'path_m': path_m, 'stuck': stuck}
     if len(drive) < 2 or len(odom) < 2:
-        res.update(strict=False, usable=False, reason='fewer than 2 drive/odom messages')
+        reason = 'fewer than 2 drive/odom messages'
+        res.update(strict=False, usable=False,
+                   reason=f'{reason}; {stuck_reason}' if stuck else reason)
         return res
     dt = np.diff(drive)
     span = (drive[-1] - drive[0]) * 1e-9
@@ -145,10 +179,12 @@ def check_car(streams, episode=None, car=None):
         if not covered:
             problems.append(f"episode not covered (head missing {res['head_missing_s']:.3f} s, "
                             f"tail missing {res['tail_missing_s']:.3f} s)")
+    if stuck:
+        problems.append(stuck_reason)
     res['strict'] = not problems
     res['usable'] = (abs(res['dt_mean_ms'] - 10.0) <= 0.2 and not res['dup'] and not res['backward']
                      and res['dt_max_ms'] <= 20.5 and res['controller_miss'] == 0
-                     and res['odom_match'] == 1.0 and covered)
+                     and res['odom_match'] == 1.0 and covered and not stuck)
     res['reason'] = '; '.join(problems)
     return res
 
@@ -184,7 +220,8 @@ def print_report(rows, cars):
         measured = [r for r in sel if 'rate_hz' in r]
         strict = sum(1 for r in sel if r['strict'])
         usable = sum(1 for r in sel if r['usable'])
-        print(f'{car}: strict pass {strict}/{len(sel)}, usable {usable}/{len(sel)}')
+        stuck = sum(1 for r in sel if r.get('stuck'))
+        print(f'{car}: strict pass {strict}/{len(sel)}, usable {usable}/{len(sel)}, stuck {stuck}')
         if measured:
             def col(key):
                 return np.array([r[key] for r in measured], dtype=float)

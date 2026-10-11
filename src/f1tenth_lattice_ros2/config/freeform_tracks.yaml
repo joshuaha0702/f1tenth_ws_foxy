@@ -1,0 +1,34 @@
+# 비타원형(free-form) 트랙 목록. tools/generate_freeform_tracks.py가 읽어서
+# maps/<name>/, racecar_description/meshes/<name 소문자>.stl, worlds/<name 소문자>.world를 생성한다.
+#
+# Simple_v01~v20(타원, raceline 곡률 <= 0.38)에 없는 급커브·S자·헤어핀을 학습에 넣기 위한 맵.
+# 원본 Simple은 raceline 곡률 최대 0.53, 0.4 초과 22%.
+#
+# width:          트랙 폭 (m). 중앙선(raceline1) 양쪽 width/2에 벽
+# 중앙선 = 일정 곡률 코너(회전각 무작위: 우 40~100도 / 120~190도 헤어핀, 좌 30~120도 = S자) +
+#          코너 사이 직선(루프가 닫히도록 길이를 최적화로 결정). 시계 방향.
+# kappa_min/max:  코너 곡률 범위 (1/m). 가장 큰 회전에 kappa_max. kappa_max <= 1/(width/2 + 0.3)
+# n_corners:      코너 수
+# left_share:     좌회전 코너 비율 (S자 빈도)
+# straight:       직선 길이 범위 [최소, 목표 최대] (m)
+# seed:           난수 시드 (조건을 만족할 때까지 같은 시드 열에서 재시도)
+#
+# 평가 전용(학습 제외) 후보: Freeform_f04, Freeform_f10, Freeform_f16
+
+tracks:
+  - { name: Freeform_f01, width: 3.4, kappa_min: 0.25, kappa_max: 0.40, n_corners: 5, left_share: 0.15, straight: [3.0, 10.0], seed: 101 }
+  - { name: Freeform_f02, width: 3.2, kappa_min: 0.30, kappa_max: 0.45, n_corners: 6, left_share: 0.25, straight: [2.0, 8.0], seed: 102 }
+  - { name: Freeform_f03, width: 3.0, kappa_min: 0.35, kappa_max: 0.50, n_corners: 7, left_share: 0.30, straight: [1.5, 7.0], seed: 103 }
+  - { name: Freeform_f04, width: 3.0, kappa_min: 0.40, kappa_max: 0.52, n_corners: 6, left_share: 0.20, straight: [2.0, 9.0], seed: 104 }
+  - { name: Freeform_f05, width: 2.8, kappa_min: 0.40, kappa_max: 0.55, n_corners: 7, left_share: 0.30, straight: [1.5, 7.0], seed: 105 }
+  - { name: Freeform_f06, width: 3.6, kappa_min: 0.25, kappa_max: 0.40, n_corners: 8, left_share: 0.35, straight: [1.5, 6.0], seed: 106 }
+  - { name: Freeform_f07, width: 3.2, kappa_min: 0.35, kappa_max: 0.47, n_corners: 4, left_share: 0.00, straight: [4.0, 14.0], seed: 107 }
+  - { name: Freeform_f08, width: 3.0, kappa_min: 0.30, kappa_max: 0.52, n_corners: 9, left_share: 0.35, straight: [1.5, 6.0], seed: 108 }
+  - { name: Freeform_f09, width: 2.8, kappa_min: 0.45, kappa_max: 0.55, n_corners: 6, left_share: 0.25, straight: [2.0, 9.0], seed: 109 }
+  - { name: Freeform_f10, width: 3.4, kappa_min: 0.30, kappa_max: 0.43, n_corners: 6, left_share: 0.30, straight: [2.0, 9.0], seed: 110 }
+  - { name: Freeform_f11, width: 3.0, kappa_min: 0.35, kappa_max: 0.50, n_corners: 5, left_share: 0.15, straight: [3.0, 10.0], seed: 111 }
+  - { name: Freeform_f12, width: 2.8, kappa_min: 0.45, kappa_max: 0.57, n_corners: 5, left_share: 0.20, straight: [2.5, 10.0], seed: 112 }
+  - { name: Freeform_f13, width: 3.2, kappa_min: 0.30, kappa_max: 0.47, n_corners: 8, left_share: 0.30, straight: [1.5, 7.0], seed: 113 }
+  - { name: Freeform_f14, width: 3.6, kappa_min: 0.25, kappa_max: 0.42, n_corners: 7, left_share: 0.30, straight: [2.0, 8.0], seed: 114 }
+  - { name: Freeform_f15, width: 2.9, kappa_min: 0.40, kappa_max: 0.54, n_corners: 8, left_share: 0.30, straight: [1.5, 6.0], seed: 115 }
+  - { name: Freeform_f16, width: 3.1, kappa_min: 0.35, kappa_max: 0.48, n_corners: 6, left_share: 0.25, straight: [2.0, 8.0], seed: 116 }

@@ -24,6 +24,12 @@ def generate_launch_description():
         default_value=os.path.join(end2race_pkg, 'models', 'end2race.pth'),
         description='end2race 모델 가중치(.pth) 경로'
     )
+    speed_input_arg = DeclareLaunchArgument(
+        'speed_input', default_value='command',
+        description='모델 속도 입력: command(직전 출력 명령) 또는 odom(/odom 측정 속도, '
+                    'train.py --speed_input odom으로 학습한 모델) 또는 hybrid([odom, 직전 출력], '
+                    'train.py --speed_input hybrid)'
+    )
     use_rviz_arg = DeclareLaunchArgument(
         'use_rviz', default_value='false',
         description='원격 모니터링용 RViz2 실행 여부 (실차에선 보통 false, 개발 PC에서 볼 때 true)'
@@ -53,10 +59,12 @@ def generate_launch_description():
             'use_sim_time': False,
             'model_path': model_path,
             'robot_name': namespace,
+            'speed_input': LaunchConfiguration('speed_input'),
         }],
         remappings=[
             (['/', namespace, '/scan'], '/scan'),
             (['/', namespace, '/drive'], '/drive'),
+            (['/', namespace, '/odom'], '/odom'),  # speed_input:=odom일 때만 구독
         ]
     )
 
@@ -96,6 +104,7 @@ def generate_launch_description():
     return LaunchDescription([
         namespace_arg,
         model_path_arg,
+        speed_input_arg,
         use_rviz_arg,
         record_bag_arg,
         agent_node,

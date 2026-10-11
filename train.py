@@ -11,10 +11,11 @@ import glob
 from datetime import datetime
 from tqdm import tqdm
 from typing import Optional, Tuple
-from model import End2Race, End2RaceWithDelay
+from model import End2Race, End2RaceWithDelay, speed_dims_from_state_dict
 
 
 SPEED_LOSS_WEIGHT = 0.05
+CMD_DROP_MAX_SPEED = 2.5  # --speed_input command, --cmd_drop: replacement speed ~ U[0, this]
 
 
 def get_loss_output_paths(model_path: str) -> Tuple[str, str]:
@@ -48,6 +49,10 @@ def save_loss_history(loss_history, csv_path: str, plot_path: str):
             axis.plot(epochs, history[key].to_numpy(), label="train (windows, noise/mask on)", alpha=0.8)
         if "val_" + key in history:
             axis.plot(epochs, history["val_" + key].to_numpy(), label="validation (full episodes)", linewidth=2)
+        if "val_selffeed_" + key in history:
+            sf = history[["epoch", "val_selffeed_" + key]].dropna()
+            axis.plot(sf["epoch"].to_numpy(), sf["val_selffeed_" + key].to_numpy(), "o-",
+                      label="validation, self-fed command", linewidth=2)
         axis.set_yscale("log")
         axis.set_xlabel("Epoch")
         axis.set_title(title)
@@ -85,6 +90,37 @@ def parse_arguments():
     parser.add_argument("--start_from_rest", action="store_true",
                         help="Also train on each episode's first row with previous speed 0, "
                              "matching inference that starts every episode from rest")
+    parser.add_argument("--speed_input", choices=["command", "odom", "hybrid"], default="command",
+                        help="'command': speed input = previous speed command (desired_speed of the "
+                             "previous row; the agent feeds back its own last output). 'odom': speed "
+                             "input = measured speed at the row's time (CSV column odom_speed, same row, "
+                             "no shift; the agent feeds /<robot>/odom twist.linear.x). Copying the "
+                             "previous command reproduces the label to 0.035 m/s RMSE, so 'command' "
+                             "lets the model skip learning to brake from the LiDAR. 'hybrid': 2-dim speed "
+                             "input [odom_speed (same row), previous command (as in 'command')]; during "
+                             "training the command channel is made unreliable (--cmd_drop/--cmd_noise/"
+                             "--cmd_lag_prob, redrawn every epoch); the agent feeds [odom, own last output].")
+    parser.add_argument("--cmd_drop", type=float, default=None,
+                        help="hybrid/command: per-timestep probability of replacing the previous-command "
+                             "input; hybrid: by the measured odom speed of the row, command: by a random "
+                             f"speed uniform in [0, {CMD_DROP_MAX_SPEED}] (default: hybrid 0.3, command 0)")
+    parser.add_argument("--cmd_noise", type=float, default=None,
+                        help="hybrid/command: sigma (m/s) of Gaussian noise added to the previous-command "
+                             "input (command: then clamped at >= 0) (default: hybrid 0.15, command 0)")
+    parser.add_argument("--cmd_lag_prob", type=float, default=None,
+                        help="hybrid/command: per-timestep probability of using the command from "
+                             "--cmd_lag_s earlier (default: hybrid 0.2, command 0)")
+    parser.add_argument("--cmd_lag_s", type=float, default=0.5,
+                        help="hybrid/command: lag of --cmd_lag_prob in seconds (rows from the CSV time step; "
+                             "0 before the episode start)")
+    parser.add_argument("--selffeed_every", type=int, default=10,
+                        help="hybrid/command: every N epochs (and on the last epoch) also run the validation "
+                             "episodes step by step feeding the model's own previous speed output into the "
+                             "command input (val_selffeed_* columns; the checkpoint still follows val_loss)")
+    parser.add_argument("--selffeed_episodes", type=int, default=40,
+                        help="hybrid/command: at most this many validation episodes (evenly spaced) for val_selffeed")
+    parser.add_argument("--selffeed_max_speed", type=float, default=3.0,
+                        help="hybrid/command: self-fed command is clipped to [0, this] like agent_node control.max_speed")
 
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--learning_rate", type=float, default=0.001)
@@ -107,6 +143,18 @@ def parse_arguments():
     parser.add_argument("--resume_warmup_epochs", type=float, default=1.0,
                         help="Resume: optimizer state is not saved, so ramp the lr from 0 back onto the "
                              "schedule over this many epochs to let Adam's moments settle")
+    parser.add_argument("--balance_leader_near", type=float, default=None,
+                        help="Target share of 'leader within --near_gap m ahead' rows, applied separately "
+                             "in corners (|raceline curvature| >= 0.25) and elsewhere, by down-weighting "
+                             "those rows in the loss. Needs <csv>.meta.npz from "
+                             "tools/annotate_training_csv.py. On Freeform data 65 %% of the corner time is "
+                             "spent crawling behind the leader and the model learned 'corner -> slow'.")
+    parser.add_argument("--near_gap", type=float, default=3.0)
+    parser.add_argument("--skip_first_s", type=float, default=0.0,
+                        help="Exclude the rows of the first SEC seconds of every episode (time < first "
+                             "time + SEC) from the training loss and the validation metrics by giving them "
+                             "weight 0. They are still fed to the GRU, so the hidden state is warmed up. "
+                             "0 (default) keeps every row.")
     parser.add_argument("--val_fraction", type=float, default=0.1,
                         help="Share of episodes per map held out for validation (0 disables). Every epoch "
                              "the model runs each validation episode from its start with a fresh hidden "
@@ -125,22 +173,40 @@ class SequenceDataset(Dataset):
     def __init__(self, data_path: str, sequence_length: int = 50,
                  use_lidar_delay: bool = False, stride: int = 1, device: str = "cuda",
                  add_lidar_noise: bool = True, start_from_rest: bool = False,
-                 seq_lengths: Optional[list] = None, csv_files: Optional[list] = None):
+                 seq_lengths: Optional[list] = None, csv_files: Optional[list] = None,
+                 balance_leader_near: Optional[float] = None, near_gap: float = 3.0,
+                 speed_input: str = "command", skip_first_s: float = 0.0,
+                 cmd_drop: Optional[float] = None, cmd_noise: Optional[float] = None,
+                 cmd_lag_prob: Optional[float] = None, cmd_lag_s: float = 0.5):
         self.sequence_length = sequence_length
         self.seq_lengths = sorted(seq_lengths) if seq_lengths else None
         self.episodes = []
         self.csv_files = csv_files
+        self.balance_leader_near = balance_leader_near
+        self.near_gap = near_gap
+        # row classes: 0 elsewhere/leader far, 1 elsewhere/near, 2 corner/far, 3 corner/near, 4 unknown
+        self.class_weight = np.ones(5, dtype=np.float32)
         self.stride = stride
         self.device = device
         self.use_lidar_delay = use_lidar_delay
         self.add_lidar_noise = add_lidar_noise
         self.start_from_rest = start_from_rest
+        self.speed_input = speed_input
+        self.skip_first_s = skip_first_s
+        self.cmd_drop, self.cmd_noise, self.cmd_lag_prob = resolve_cmd_augmentation(
+            speed_input, cmd_drop, cmd_noise, cmd_lag_prob)
+        self.cmd_lag_s = cmd_lag_s
+        # command mode with any augmentation: speed stored as [previous command, lagged command]
+        self.augment_command = (speed_input == "command" and
+                                (self.cmd_drop > 0 or self.cmd_noise > 0 or self.cmd_lag_prob > 0))
 
         self.lidar_columns = [f"lidar_{i}" for i in range(360)]
         self.action_columns = ["steer", "desired_speed"]
 
         self.sequences = []
         self._load_episodes(data_path)
+        if self.balance_leader_near is not None:
+            self._set_class_weights()
 
         if self.seq_lengths:
             self.resample()
@@ -162,6 +228,7 @@ class SequenceDataset(Dataset):
 
             if not all(col in df.columns for col in required_cols):
                 continue
+            check_speed_column(df, csv_file, self.speed_input)
             min_rows = (min(self.seq_lengths) if self.seq_lengths else self.sequence_length) + 1
             if len(df) < min_rows:  # +1 for speed_prev offset
                 continue
@@ -169,12 +236,67 @@ class SequenceDataset(Dataset):
             lidar_data = df[self.lidar_columns].values.astype(np.float32)
             action_data = df[self.action_columns].values.astype(np.float32)
             delay_data = df["lidar_delay"].values.astype(np.float32).reshape(-1, 1) if self.use_lidar_delay else None
+            odom_data = (df["odom_speed"].values.astype(np.float32).reshape(-1, 1)
+                         if self.speed_input in ("odom", "hybrid") else None)
+            if self.speed_input == "hybrid" or self.augment_command:
+                # stored speed columns: hybrid [odom, previous command, previous command cmd_lag_s
+                # earlier], __getitem__ augments column 1 (using 0 and 2) and returns the first two;
+                # augmented command mode [previous command, lagged], __getitem__ returns 1 column
+                lag_rows = 0
+                if self.cmd_lag_prob > 0 and len(df) > 1:
+                    lag_rows = max(1, int(round(self.cmd_lag_s / float(np.median(np.diff(df["time"].values))))))
+                cmd_prev = np.concatenate(([0.0], action_data[:-1, 1])).astype(np.float32)
+                cmd_lag = np.concatenate((np.zeros(min(lag_rows, len(df)), dtype=np.float32),
+                                          cmd_prev[:max(len(df) - lag_rows, 0)]))
+                odom_data = (np.stack((odom_data[:, 0], cmd_prev, cmd_lag), axis=1)
+                             if self.speed_input == "hybrid" else np.stack((cmd_prev, cmd_lag), axis=1))
 
-            self._create_sequences(lidar_data, action_data, delay_data)
+            classes = np.full(len(df), 4, dtype=np.int64)
+            meta_path = csv_file + ".meta.npz"
+            if self.balance_leader_near is not None and os.path.exists(meta_path):
+                meta = np.load(meta_path)
+                if len(meta["gap"]) == len(df):
+                    near = (meta["gap"] > 0) & (meta["gap"] < self.near_gap)
+                    corner = np.abs(meta["kappa"]) >= 0.25
+                    classes = (2 * corner + near).astype(np.int64)
+            loss_mask = skip_first_mask(df, self.skip_first_s)
+            self._create_sequences(lidar_data, action_data, delay_data, classes, odom_data, loss_mask)
+
+    def _set_class_weights(self):
+        counts = np.bincount(np.concatenate([ep[4] for ep in self.episodes] if self.seq_lengths
+                                            else [s["cls"] for s in self.sequences]), minlength=5)
+        target = self.balance_leader_near
+        for far, near, name in ((0, 1, "elsewhere"), (2, 3, "corner")):
+            share = counts[near] / max(counts[near] + counts[far], 1)
+            if share > target:
+                self.class_weight[near] = target * counts[far] / ((1 - target) * counts[near])
+            print(f"Leader-near share {name}: {share:.1%} -> weight {self.class_weight[near]:.3f} "
+                  f"(target {target:.0%}, rows near {counts[near]}, far {counts[far]})")
+        if counts[4]:
+            print(f"Rows without .meta.npz context (weight 1): {counts[4]}")
 
     def _create_sequences(self, lidar_data: np.ndarray, action_data: np.ndarray,
-                          delay_data: Optional[np.ndarray] = None):
-        if self.start_from_rest:
+                          delay_data: Optional[np.ndarray] = None, classes: Optional[np.ndarray] = None,
+                          odom_data: Optional[np.ndarray] = None, loss_mask: Optional[np.ndarray] = None):
+        if classes is None:
+            classes = np.full(len(lidar_data), 4, dtype=np.int64)
+        # loss_mask (--skip_first_s): per-row 0/1 loss weight, sliced like the classes below
+        first_row = 0 if self.start_from_rest else 1
+        mask_valid = loss_mask[first_row:] if loss_mask is not None else None
+        if odom_data is not None:
+            # (hybrid: odom_data holds [odom, previous command (0 at row 0), lagged command], and
+            # augmented command mode [previous command, lagged command], so the same slicing gives
+            # the 'command' mode alignment for the command columns.)
+            # Measured speed when the command is issued: same row, no shift. Row 0 needs no
+            # special case (its measured speed is ~0 at an episode start); without
+            # --start_from_rest it is dropped anyway, as in command mode.
+            first = 0 if self.start_from_rest else 1
+            lidar_valid = lidar_data[first:]
+            action_valid = action_data[first:]
+            speed_prev = odom_data[first:]
+            delay_valid = delay_data[first:] if delay_data is not None else None
+            classes_valid = classes[first:]
+        elif self.start_from_rest:
             # The End2Race agent resets its previous speed to 0 at every episode start,
             # so keep row 0 and feed it a previous speed of 0 instead of dropping it.
             lidar_valid = lidar_data
@@ -182,46 +304,59 @@ class SequenceDataset(Dataset):
             speed_prev = np.concatenate((np.zeros((1, 1), dtype=action_data.dtype),
                                          action_data[:-1, 1:2]))
             delay_valid = delay_data
+            classes_valid = classes
         else:
             lidar_valid = lidar_data[1:]
             action_valid = action_data[1:]
             speed_prev = action_data[:-1, 1:2]
             delay_valid = delay_data[1:] if delay_data is not None else None
+            classes_valid = classes[1:]
         num_samples = len(lidar_valid)
 
         if self.seq_lengths:
             # windows are drawn per epoch in resample()
-            self.episodes.append((lidar_valid, speed_prev, action_valid, delay_valid))
+            self.episodes.append((lidar_valid, speed_prev, action_valid, delay_valid, classes_valid,
+                                  mask_valid))
             return
 
         for end_idx in range(self.sequence_length - 1, num_samples, self.stride):
             start_idx = end_idx - self.sequence_length + 1
+            if mask_valid is not None and not mask_valid[start_idx:end_idx + 1].any():
+                continue  # window lies entirely in the skipped start: no loss rows
             seq = {
                 'lidar': lidar_valid[start_idx:end_idx + 1],
                 'speed': speed_prev[start_idx:end_idx + 1],
                 'action': action_valid[start_idx:end_idx + 1],
+                'cls': classes_valid[start_idx:end_idx + 1],
             }
             if delay_valid is not None:
                 seq['delay'] = delay_valid[start_idx:end_idx + 1]
+            if mask_valid is not None:
+                seq['mask'] = mask_valid[start_idx:end_idx + 1]
             self.sequences.append(seq)
 
     def resample(self):
         """Redraw the multi-length windows (seq_lengths mode)."""
         self.sequences = []
-        for lidar, speed, action, delay in self.episodes:
+        for lidar, speed, action, delay, classes, mask in self.episodes:
             n = len(lidar)
             for length in self.seq_lengths:
                 if n < length:
                     continue
                 offset = 0 if np.random.rand() < 0.5 else np.random.randint(0, min(length, n - length + 1))
                 for start in range(offset, n - length + 1, length):
+                    if mask is not None and not mask[start:start + length].any():
+                        continue  # window lies entirely in the skipped start: no loss rows
                     seq = {
                         'lidar': lidar[start:start + length],
                         'speed': speed[start:start + length],
                         'action': action[start:start + length],
+                        'cls': classes[start:start + length],
                     }
                     if delay is not None:
                         seq['delay'] = delay[start:start + length]
+                    if mask is not None:
+                        seq['mask'] = mask[start:start + length]
                     self.sequences.append(seq)
 
     def __len__(self) -> int:
@@ -237,13 +372,55 @@ class SequenceDataset(Dataset):
             sigma = 0.0009 + (distance_for_sigma - 1.0) * (0.0018 - 0.0009) / 11.0
             lidar = (lidar + torch.randn_like(lidar) * sigma).clamp_min(0.0)
         speed = torch.tensor(seq['speed'], dtype=torch.float32, device=self.device)
+        if self.speed_input == "hybrid":
+            speed = self._augment_command(speed)
+        elif self.augment_command:
+            speed = self._augment_command_only(speed)
         action = torch.tensor(seq['action'], dtype=torch.float32, device=self.device)
+        row_weight = self.class_weight[seq['cls']]
+        if 'mask' in seq:
+            row_weight = row_weight * seq['mask']
+        weight = torch.tensor(row_weight, dtype=torch.float32, device=self.device)
 
         if self.use_lidar_delay:
             delay = torch.tensor(seq['delay'], dtype=torch.float32, device=self.device)
-            return lidar, speed, delay, action
+            return lidar, speed, delay, action, weight
 
-        return lidar, speed, action
+        return lidar, speed, action, weight
+
+
+    def _augment_command(self, speed: torch.Tensor) -> torch.Tensor:
+        """hybrid: [odom, cmd, cmd_lagged] (T, 3) -> (T, 2) [odom, unreliable cmd]. Per timestep:
+        lagged command with prob cmd_lag_prob, then odom instead of the command with prob cmd_drop,
+        then Gaussian noise cmd_noise on the command channel. Redrawn on every access."""
+        odom, cmd = speed[:, 0], speed[:, 1]
+        if self.cmd_lag_prob > 0:
+            cmd = torch.where(torch.rand_like(cmd) < self.cmd_lag_prob, speed[:, 2], cmd)
+        if self.cmd_drop > 0:
+            cmd = torch.where(torch.rand_like(cmd) < self.cmd_drop, odom, cmd)
+        if self.cmd_noise > 0:
+            cmd = cmd + torch.randn_like(cmd) * self.cmd_noise
+        return torch.stack((odom, cmd), dim=1)
+
+    def _augment_command_only(self, speed: torch.Tensor) -> torch.Tensor:
+        """command: [cmd, cmd_lagged] (T, 2) -> (T, 1) unreliable previous command. Per timestep:
+        lagged command with prob cmd_lag_prob, then a random speed uniform in [0, CMD_DROP_MAX_SPEED]
+        with prob cmd_drop, then Gaussian noise cmd_noise, clamped at >= 0. Redrawn on every access."""
+        cmd = speed[:, 0]
+        if self.cmd_lag_prob > 0:
+            cmd = torch.where(torch.rand_like(cmd) < self.cmd_lag_prob, speed[:, 1], cmd)
+        if self.cmd_drop > 0:
+            cmd = torch.where(torch.rand_like(cmd) < self.cmd_drop,
+                              torch.rand_like(cmd) * CMD_DROP_MAX_SPEED, cmd)
+        if self.cmd_noise > 0:
+            cmd = cmd + torch.randn_like(cmd) * self.cmd_noise
+        return cmd.clamp_min(0.0)[:, None]
+
+
+def resolve_cmd_augmentation(speed_input: str, cmd_drop, cmd_noise, cmd_lag_prob):
+    """None -> mode default: hybrid (0.3, 0.15, 0.2), otherwise 0 (command stays clean unless asked)."""
+    defaults = (0.3, 0.15, 0.2) if speed_input == "hybrid" else (0.0, 0.0, 0.0)
+    return tuple(d if v is None else float(v) for v, d in zip((cmd_drop, cmd_noise, cmd_lag_prob), defaults))
 
 
 class LengthGroupedBatchSampler(Sampler):
@@ -297,14 +474,40 @@ def split_episode_files(data_path: str, val_fraction: float, seed: int):
     return train_files, val_files
 
 
-def load_validation_episodes(val_files, device, use_lidar_delay: bool):
-    """Whole episodes as tensors; previous speed is 0 at the first row, like the agent."""
+def skip_first_mask(df, skip_first_s: float) -> Optional[np.ndarray]:
+    """--skip_first_s: float 0/1 per-row loss mask (0 for time < first time + skip), or None if off."""
+    if not skip_first_s or skip_first_s <= 0:
+        return None
+    t = df["time"].values.astype(np.float64)
+    return (t >= t[0] + skip_first_s).astype(np.float32)
+
+
+def check_speed_column(df, csv_file: str, speed_input: str):
+    if speed_input in ("odom", "hybrid"):
+        if "odom_speed" not in df.columns:
+            raise ValueError(f"--speed_input odom: {csv_file} has no 'odom_speed' column. Re-extract it "
+                             f"with the current src/f1tenth_lattice_ros2/tools/extract_bag_csv.py.")
+        if df["odom_speed"].isna().any():
+            raise ValueError(f"--speed_input odom: {csv_file} has NaN odom_speed (no odom in the bag?)")
+
+
+def load_validation_episodes(val_files, device, use_lidar_delay: bool, speed_input: str = "command",
+                             skip_first_s: float = 0.0):
+    """Whole episodes as tensors, run from the first row like the agent: previous speed
+    command 0 at row 0 ('command'), or the measured speed of each row ('odom'), or both
+    ('hybrid': [odom, expert previous command], clean)."""
     episodes = []
     lidar_cols = [f"lidar_{i}" for i in range(360)]
     for f in val_files:
         df = pd.read_csv(f)
+        check_speed_column(df, f, speed_input)
         action = df[["steer", "desired_speed"]].values.astype(np.float32)
-        prev = np.concatenate(([[0.0]], action[:-1, 1:2])).astype(np.float32)
+        if speed_input == "odom":
+            prev = df[["odom_speed"]].values.astype(np.float32)
+        else:
+            prev = np.concatenate(([[0.0]], action[:-1, 1:2])).astype(np.float32)
+            if speed_input == "hybrid":
+                prev = np.concatenate((df[["odom_speed"]].values.astype(np.float32), prev), axis=1)
         ep = {
             "lidar": torch.tensor(df[lidar_cols].values.astype(np.float32), device=device)[None],
             "speed": torch.tensor(prev, device=device)[None],
@@ -312,6 +515,9 @@ def load_validation_episodes(val_files, device, use_lidar_delay: bool):
         }
         if use_lidar_delay:
             ep["delay"] = torch.tensor(df["lidar_delay"].values.astype(np.float32).reshape(-1, 1), device=device)[None]
+        mask = skip_first_mask(df, skip_first_s)
+        if mask is not None:
+            ep["mask"] = torch.tensor(mask > 0, device=device)
         episodes.append(ep)
     return episodes
 
@@ -328,11 +534,60 @@ def evaluate(model, episodes, use_lidar_delay: bool):
             else:
                 pred, _ = model(ep["lidar"], ep["speed"])
             err = pred[0] - ep["action"]
+            if "mask" in ep:  # --skip_first_s: the whole episode is run, metrics skip the start
+                err = err[ep["mask"]]
             steer_se += float((err[:, 0] ** 2).sum())
             speed_se += float((err[:, 1] ** 2).sum())
             steps += err.shape[0]
     model.train()
+    steps = max(steps, 1)
     steer_mse, speed_mse = steer_se / steps, speed_se / steps
+    return {"loss": steer_mse + SPEED_LOSS_WEIGHT * speed_mse, "steer_loss": steer_mse, "speed_loss": speed_mse}
+
+
+def build_selffeed_batch(episodes, max_episodes: int):
+    """hybrid/command: up to max_episodes evenly spaced validation episodes, zero-padded into one batch
+    for evaluate_selffeed (built once)."""
+    if not episodes or max_episodes <= 0:
+        return None
+    idx = np.unique(np.linspace(0, len(episodes) - 1, min(max_episodes, len(episodes))).round().astype(int))
+    eps = [episodes[i] for i in idx]
+    lengths = [ep["action"].shape[0] for ep in eps]
+    B, T = len(eps), max(lengths)
+    device = eps[0]["action"].device
+    lidar = torch.zeros(B, T, eps[0]["lidar"].shape[-1], device=device)
+    odom = torch.zeros(B, T, device=device)
+    action = torch.zeros(B, T, 2, device=device)
+    valid = torch.zeros(B, T, dtype=torch.bool, device=device)
+    for b, (ep, n) in enumerate(zip(eps, lengths)):
+        lidar[b, :n] = ep["lidar"][0]
+        odom[b, :n] = ep["speed"][0, :, 0]
+        action[b, :n] = ep["action"]
+        valid[b, :n] = ep["mask"] if "mask" in ep else True
+    return {"lidar": lidar, "odom": odom, "action": action, "valid": valid}
+
+
+def evaluate_selffeed(model, batch, max_speed: float):
+    """hybrid/command: run all batched validation episodes step by step from rest, command input =
+    the model's own previous speed output clipped to [0, max_speed] (as agent_node drives).
+    hybrid feeds [odom, own command]; command (model.speed_dims == 1) feeds [own command]."""
+    model.eval()
+    B, T = batch["odom"].shape
+    last = torch.zeros(B, device=batch["odom"].device)
+    hidden = None
+    preds = torch.zeros(B, T, 2, device=last.device)
+    with torch.no_grad():
+        for t in range(T):
+            s = (torch.stack((batch["odom"][:, t], last), dim=1) if model.speed_dims == 2
+                 else last[:, None])[:, None, :]
+            a, hidden = model(batch["lidar"][:, t:t + 1], s, hidden)
+            preds[:, t] = a[:, 0]
+            last = a[:, 0, 1].clamp(0.0, max_speed)
+    model.train()
+    err = (preds - batch["action"])[batch["valid"]]
+    steps = max(err.shape[0], 1)
+    steer_mse = float((err[:, 0] ** 2).sum()) / steps
+    speed_mse = float((err[:, 1] ** 2).sum()) / steps
     return {"loss": steer_mse + SPEED_LOSS_WEIGHT * speed_mse, "steer_loss": steer_mse, "speed_loss": speed_mse}
 
 
@@ -358,7 +613,7 @@ def cosine_lr(progress_epochs: float, num_epochs: int, peak_lr: float, min_lr: f
 
 def train(model_path, model, train_loader, criterion, optimizer, scheduler,
           num_epochs=100, use_lidar_delay=False, start_epoch=0, best_loss=float("inf"),
-          val_episodes=None):
+          val_episodes=None, selffeed_batch=None, selffeed_every=10, selffeed_max_speed=3.0):
     """scheduler: a ReduceLROnPlateau stepped with the epoch loss, or a function
     lr(fractional_epoch) applied before every batch. start_epoch: epochs already done.
     val_episodes: if given, the checkpoint (and a plateau scheduler) follow the validation loss."""
@@ -386,17 +641,21 @@ def train(model_path, model, train_loader, criterion, optimizer, scheduler,
                     optimizer.zero_grad()
 
                     if use_lidar_delay:
-                        lidar_seq, speed_seq, delay_seq, target_actions = batch
+                        lidar_seq, speed_seq, delay_seq, target_actions, weights = batch
                         predicted_actions, _ = model(lidar_seq, speed_seq, delay_seq)
                     else:
-                        lidar_seq, speed_seq, target_actions = batch
+                        lidar_seq, speed_seq, target_actions, weights = batch
                         predicted_actions, _ = model(lidar_seq, speed_seq)
 
                     pred_flat = predicted_actions.view(-1, predicted_actions.shape[-1])
                     tgt_flat = target_actions.view(-1, target_actions.shape[-1])
 
-                    steer_loss = criterion(pred_flat[:, 0], tgt_flat[:, 0])
-                    speed_loss = criterion(pred_flat[:, 1], tgt_flat[:, 1])
+                    # row-weighted MSE (all weights 1 unless --balance_leader_near)
+                    w_flat = weights.reshape(-1)
+                    # (--skip_first_s rows have weight 0; the clamp only guards an all-skipped batch)
+                    w_sum = w_flat.sum().clamp_min(1e-8)
+                    steer_loss = (w_flat * (pred_flat[:, 0] - tgt_flat[:, 0]) ** 2).sum() / w_sum
+                    speed_loss = (w_flat * (pred_flat[:, 1] - tgt_flat[:, 1]) ** 2).sum() / w_sum
                     loss = steer_loss + speed_loss * SPEED_LOSS_WEIGHT
 
                     loss.backward()
@@ -425,6 +684,13 @@ def train(model_path, model, train_loader, criterion, optimizer, scheduler,
                 select_loss = val["val_loss"]
                 message += (f" | Val: {val['val_loss']:.5f} (steer {val['val_steer_rmse_deg']:.2f} deg, "
                             f"speed {val['val_speed_rmse_mps']:.3f} m/s RMSE)")
+            if selffeed_batch is not None and selffeed_every > 0 and \
+                    ((epoch + 1) % selffeed_every == 0 or epoch + 1 == num_epochs):
+                sf = error_columns("val_selffeed_", evaluate_selffeed(model, selffeed_batch, selffeed_max_speed))
+                row.update(sf)
+                message += (f" | Val self-fed ({selffeed_batch['odom'].shape[0]} ep): "
+                            f"steer {sf['val_selffeed_steer_rmse_deg']:.2f} deg, "
+                            f"speed {sf['val_selffeed_speed_rmse_mps']:.3f} m/s RMSE")
             row["learning_rate"] = current_lr
             loss_history.append(row)
             print(message)
@@ -454,6 +720,8 @@ if __name__ == "__main__":
     print(f"Mode: {args.mode} | Model path: {args.model_path}")
 
     use_lidar_delay = (args.mode == "lidar_delay")
+    if use_lidar_delay and args.speed_input == "hybrid":
+        raise ValueError("--speed_input hybrid is only implemented for --mode origin")
 
     train_files, val_files = split_episode_files(args.data_path, args.val_fraction, args.val_seed)
     print(f"Episodes: {len(train_files)} train, {len(val_files)} validation "
@@ -467,10 +735,36 @@ if __name__ == "__main__":
         device=device,
         add_lidar_noise=not args.disable_lidar_noise,
         start_from_rest=args.start_from_rest,
-        seq_lengths=args.seq_lengths
+        seq_lengths=args.seq_lengths,
+        balance_leader_near=args.balance_leader_near,
+        near_gap=args.near_gap,
+        speed_input=args.speed_input,
+        skip_first_s=args.skip_first_s,
+        cmd_drop=args.cmd_drop,
+        cmd_noise=args.cmd_noise,
+        cmd_lag_prob=args.cmd_lag_prob,
+        cmd_lag_s=args.cmd_lag_s,
     )
+    print(f"Speed input: {args.speed_input}")
+    if args.speed_input == "hybrid":
+        print(f"Command channel augmentation: drop->odom {dataset.cmd_drop}, noise sigma {dataset.cmd_noise} m/s, "
+              f"lag {args.cmd_lag_s} s with prob {dataset.cmd_lag_prob}")
+    elif args.speed_input == "command":
+        if dataset.augment_command:
+            print(f"Previous-command augmentation: drop->uniform[0, {CMD_DROP_MAX_SPEED}] {dataset.cmd_drop}, "
+                  f"noise sigma {dataset.cmd_noise} m/s (clamped >= 0), lag {args.cmd_lag_s} s with prob "
+                  f"{dataset.cmd_lag_prob}")
+        else:
+            print("Previous-command augmentation: off")
+    if args.skip_first_s > 0:
+        print(f"Loss/validation skip the first {args.skip_first_s} s of every episode (rows still fed to the GRU)")
     print(f"LiDAR noise augmentation: {'disabled' if args.disable_lidar_noise else 'enabled'}")
-    val_episodes = load_validation_episodes(val_files, device, use_lidar_delay) if val_files else None
+    val_episodes = (load_validation_episodes(val_files, device, use_lidar_delay, args.speed_input,
+                                             args.skip_first_s)
+                    if val_files else None)
+    selffeed_batch = (build_selffeed_batch(val_episodes, args.selffeed_episodes)
+                      if val_episodes and not use_lidar_delay and args.speed_input in ("hybrid", "command")
+                      else None)
 
     dataloader_kwargs = {'pin_memory': False, 'num_workers': 0} if device.type != "cpu" else {}
     if args.seq_lengths:
@@ -491,7 +785,8 @@ if __name__ == "__main__":
     if use_lidar_delay:
         model = End2RaceWithDelay(mask_prob=args.mask_prob, hidden_scale=args.hidden_scale).to(device)
     else:
-        model = End2Race(mask_prob=args.mask_prob, hidden_scale=args.hidden_scale).to(device)
+        model = End2Race(mask_prob=args.mask_prob, hidden_scale=args.hidden_scale,
+                         speed_dims=2 if args.speed_input == "hybrid" else 1).to(device)
 
     print(f"Train batches: {len(train_loader)}")
 
@@ -503,7 +798,11 @@ if __name__ == "__main__":
         if not os.path.exists(checkpoint_path):
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
         print(f"Loading pretrained weights from {checkpoint_path}")
-        model.load_state_dict(torch.load(checkpoint_path, map_location=device, weights_only=False))
+        state = torch.load(checkpoint_path, map_location=device, weights_only=False)
+        if not use_lidar_delay and speed_dims_from_state_dict(state) != model.speed_dims:
+            raise ValueError(f"{checkpoint_path} has speed input width {speed_dims_from_state_dict(state)}, "
+                             f"--speed_input {args.speed_input} needs {model.speed_dims}")
+        model.load_state_dict(state)
 
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
@@ -534,7 +833,10 @@ if __name__ == "__main__":
         start_epoch=args.start_epoch,
         best_loss=args.best_loss,
         val_episodes=val_episodes,
-        use_lidar_delay=use_lidar_delay
+        use_lidar_delay=use_lidar_delay,
+        selffeed_batch=selffeed_batch,
+        selffeed_every=args.selffeed_every,
+        selffeed_max_speed=args.selffeed_max_speed,
     )
 
     print("\nTraining completed successfully!")

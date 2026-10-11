@@ -9,6 +9,9 @@ counted when car1 gets a car length ahead (g < -OVERTAKE_MARGIN_M).
 Collisions are split by the contact partner named in the episode manager log
 (car = car1 touched car2, wall_car1 / wall_car2 = that car touched a wall).
 Leader columns (speed, stuck) are for judging an End2Race leader (LEADER=end2race).
+Episodes where the ego never published /car1/drive (episode_info.yaml first_drive.car1
+is null, or the bag has no /car1/drive message) are skipped and counted per map: a dead
+agent process is not a parked car being rammed (seen on Freeform_f16 of an older run).
 
     evaluate_overtakes.py <root> [--maps-dir src/f1tenth_lattice_ros2/maps] [--csv out.csv]
 """
@@ -20,6 +23,7 @@ import os
 import re
 
 import numpy as np
+import yaml
 from rosbags.rosbag2 import Reader
 from rosbags.typesys import Stores, get_typestore
 
@@ -42,10 +46,28 @@ def unwrapped_progress(xy_track, s_track, lap, points):
     return np.concatenate(([s[0]], s[0] + np.cumsum((np.diff(s) + lap / 2) % lap - lap / 2)))
 
 
-def read_odom(bag, typestore):
+def ego_drive_missing(bag):
+    """True when episode_info.yaml says /car1/drive never arrived (first_drive.car1 null).
+    None when the file is missing or has no first_drive entry (decide from the bag)."""
+    path = os.path.join(bag, 'episode_info.yaml')
+    if not os.path.exists(path):
+        return None
+    with open(path) as f:
+        info = yaml.safe_load(f) or {}
+    first_drive = info.get('first_drive')
+    if not isinstance(first_drive, dict) or 'car1' not in first_drive:
+        return None
+    return first_drive['car1'] is None
+
+
+def read_odom(bag, typestore, drive_count=None):
+    """Odom arrays per car; if drive_count is a dict, also counts /carN/drive messages."""
     out = {'car1': [], 'car2': []}
     with Reader(bag) as reader:
         for conn, _, raw in reader.messages():
+            if drive_count is not None and conn.topic.endswith('/drive'):
+                drive_count[conn.topic] = drive_count.get(conn.topic, 0) + 1
+                continue
             for car in out:
                 if conn.topic == f'/{car}/odom':
                     msg = typestore.deserialize_cdr(raw, conn.msgtype)
@@ -78,7 +100,14 @@ def parse_log(path):
 
 
 def score_episode(bag, xy, s, lap, typestore):
-    odom = read_odom(bag, typestore)
+    """Scores for one episode, None if odom is too short, 'no_drive' if the ego
+    never published /car1/drive."""
+    if ego_drive_missing(bag):
+        return 'no_drive'
+    drive_count = {}
+    odom = read_odom(bag, typestore, drive_count)
+    if drive_count.get('/car1/drive', 0) == 0:
+        return 'no_drive'
     a, b = odom['car1'], odom['car2']
     if len(a) < 10 or len(b) < 10:
         return None
@@ -118,6 +147,7 @@ def main():
 
     typestore = get_typestore(Stores.ROS2_FOXY)
     rows = []
+    skipped = {}
     for map_dir in sorted(glob.glob(os.path.join(args.root, '*', ''))):
         name = os.path.basename(os.path.dirname(map_dir))
         raceline = os.path.join(args.maps_dir, name, 'raceline1.csv')
@@ -127,6 +157,9 @@ def main():
         kinds = parse_log(os.path.join(args.root, 'logs', f'{name}.log'))
         for bag in sorted(glob.glob(os.path.join(map_dir, '*', 'ep*'))):
             res = score_episode(bag, xy, s, lap, typestore)
+            if res == 'no_drive':
+                skipped[name] = skipped.get(name, 0) + 1
+                continue
             if res is None:
                 continue
             label = os.path.basename(bag).split('_')[0]
@@ -160,6 +193,8 @@ def main():
     for name in sorted({r['map'] for r in rows}):
         report(name, [r for r in rows if r['map'] == name])
     report('ALL', rows)
+    for name in sorted(skipped):
+        print(f'{name:18s} skipped {skipped[name]} episode(s): /car1/drive never published (dead agent)')
 
 
 if __name__ == '__main__':

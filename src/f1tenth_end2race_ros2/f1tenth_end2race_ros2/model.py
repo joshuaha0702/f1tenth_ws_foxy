@@ -3,8 +3,14 @@ import torch.nn as nn
 from typing import Optional, Tuple
 import numpy as np
 
+def speed_dims_from_state_dict(state_dict) -> int:
+    """체크포인트(plain state_dict)의 속도 입력 폭: 'command'/'odom' 모델은 1,
+    train.py --speed_input hybrid ([odom, 직전 명령]) 모델은 2."""
+    return int(state_dict["speed_mlp.0.weight"].shape[1])
+
+
 class End2Race(nn.Module):
-    def __init__(self, mask_prob=0.0, hidden_scale=4):
+    def __init__(self, mask_prob=0.0, hidden_scale=4, speed_dims=1):
         super(End2Race, self).__init__()
         
         # 모델 설정 변수 (기본 구조 유지)
@@ -12,6 +18,7 @@ class End2Race(nn.Module):
         self.num_actions = 2   # [Steering, Speed]
         self.mask_prob = mask_prob
         self.hidden_scale = hidden_scale
+        self.speed_dims = speed_dims
         
         # 1. 센서 전처리 파라미터 (Learnable Parameter k)
         k_init = (-1 / 10.0) * torch.log(torch.tensor(0.01) / (2 - torch.tensor(0.01)))
@@ -19,7 +26,7 @@ class End2Race(nn.Module):
         
         # 2. Speed 처리용 MLP
         self.speed_mlp = nn.Sequential(
-            nn.Linear(1, self.num_features // 6),
+            nn.Linear(speed_dims, self.num_features // 6),
             nn.ReLU()
         )
         self.dummy_embedding = nn.Parameter(torch.randn(1, self.num_features // 6))
@@ -93,18 +100,22 @@ class End2Race(nn.Module):
         self._infer_device = device
         # 입력 텐서를 미리 할당해 매 스텝 allocation 제거
         self._x_buf = torch.zeros(1, 1, self.num_features, dtype=torch.float32, device=device)
-        self._s_buf = torch.zeros(1, 1, 1, dtype=torch.float32, device=device)
+        self._s_buf = torch.zeros(1, 1, self.speed_dims, dtype=torch.float32, device=device)
 
     @torch.inference_mode()
-    def inference_step(self, lidar_data: np.ndarray, current_speed: float,
+    def inference_step(self, lidar_data: np.ndarray, current_speed,
                        prev_hidden: Optional[torch.Tensor] = None) -> Tuple[np.ndarray, torch.Tensor]:
         """
         ROS 2 Gazebo 환경에서 매 프레임마다 호출하는 실시간 추론 함수
+        current_speed: float (speed_dims=1) 또는 길이 speed_dims 벡터 (hybrid: [odom, 직전 명령])
         """
-        device = self._infer_device
-
         self._x_buf.copy_(torch.as_tensor(lidar_data, dtype=torch.float32).view(1, 1, -1))
-        self._s_buf[0, 0, 0] = current_speed
+        if np.ndim(current_speed) == 0:
+            if self.speed_dims != 1:
+                raise ValueError(f"speed_dims={self.speed_dims} 모델에는 길이 {self.speed_dims} 속도 벡터가 필요합니다")
+            self._s_buf[0, 0, 0] = float(current_speed)
+        else:
+            self._s_buf.copy_(torch.as_tensor(current_speed, dtype=torch.float32).view(1, 1, self.speed_dims))
 
         actions_tensor, next_hidden = self.forward(self._x_buf, self._s_buf, prev_hidden)
 

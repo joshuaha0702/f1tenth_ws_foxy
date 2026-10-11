@@ -2,8 +2,12 @@
   ros__parameters:
     robot_name: "car1"
     # 실제 경로는 launch에서 패키지 share 기준으로 주입됨 (standalone 실행 시에만 사용되는 fallback)
-    model_path: "models/ego_variants12s_cosine_20261006.pth"
+    model_path: "models/ego_20261012.pth"
     hidden_scale: 4
+    # 속도 입력: "command" = 직전 출력 속도 명령(기존 모델), "odom" = /<robot>/odom 측정 속도
+    # (train.py --speed_input odom으로 학습한 모델에만 사용), "hybrid" = [odom, 직전 출력] 2채널
+    # (train.py --speed_input hybrid 모델)
+    speed_input: "command"
     
     control:
       max_steer: 0.52

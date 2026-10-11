@@ -38,6 +38,23 @@ def stamp_to_ns(stamp):
     return int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
 
 
+def odom_speed_at(query_ns, odom_ns, odom_speed):
+    """각 query 시각의 odom twist.linear.x. 같은 시각의 odom이 있으면 그 값(header 경로에서
+    drive stamp = triggering odom stamp라 보통 정확히 일치), 없으면 선형보간(구간 밖은 끝값).
+    odom이 없으면 NaN."""
+    query_ns = np.asarray(query_ns, dtype=np.int64)
+    if len(odom_ns) == 0:
+        return np.full(len(query_ns), np.nan)
+    order = np.argsort(np.asarray(odom_ns, dtype=np.int64), kind='stable')
+    t = np.asarray(odom_ns, dtype=np.int64)[order]
+    v = np.asarray(odom_speed, dtype=np.float64)[order]
+    out = np.interp(query_ns.astype(np.float64), t.astype(np.float64), v)
+    pos = np.clip(np.searchsorted(t, query_ns), 0, len(t) - 1)
+    exact = t[pos] == query_ns
+    out[exact] = v[pos[exact]]
+    return out
+
+
 def header_stamps_valid(stamps_ns, label='drive'):
     """header.stamp를 시각으로 믿을 수 있는지: 엄격히 증가하고 간격이 일정한지.
 
@@ -83,6 +100,7 @@ def extract_bag_to_csv(bag_dir_path, save_dir='/root/f1tenth_ws/f1tenth_data', r
 
     scan_topic = f'/{robot_name}/scan'
     drive_topic = f'/{robot_name}/drive'
+    odom_topic = f'/{robot_name}/odom'
     clock_topic = '/clock'
 
     typestore = get_typestore(Stores.ROS2_FOXY)
@@ -99,6 +117,7 @@ def extract_bag_to_csv(bag_dir_path, save_dir='/root/f1tenth_ws/f1tenth_data', r
     drives = []         # (bag_ns, steer, desired_speed)
     scan_headers = []   # scans와 같은 순서의 header.stamp(ns)
     drive_headers = []  # drives와 같은 순서의 header.stamp(ns)
+    odoms = []          # (bag_ns, header.stamp ns, twist.linear.x) — odom_speed 컬럼(측정 속도)용
     clock_wall = []     # bag 기록 시각(ns)
     clock_sim = []      # 그 순간의 sim-time(ns)
 
@@ -107,7 +126,7 @@ def extract_bag_to_csv(bag_dir_path, save_dir='/root/f1tenth_ws/f1tenth_data', r
     try:
         with Reader(bag_dir_path) as reader:
             for connection, bag_ts, rawdata in reader.messages():
-                if connection.topic not in (scan_topic, drive_topic, clock_topic):
+                if connection.topic not in (scan_topic, drive_topic, odom_topic, clock_topic):
                     continue
 
                 msg = typestore.deserialize_cdr(rawdata, connection.msgtype)
@@ -132,6 +151,10 @@ def extract_bag_to_csv(bag_dir_path, save_dir='/root/f1tenth_ws/f1tenth_data', r
                     ))
                     drive_headers.append(stamp_to_ns(msg.header.stamp))
 
+                elif connection.topic == odom_topic:
+                    odoms.append((bag_ts, stamp_to_ns(msg.header.stamp),
+                                  float(msg.twist.twist.linear.x)))
+
     except Exception as e:
         print(f"Bag 파일을 읽는 중 오류 발생: {e}")
         return 0
@@ -143,6 +166,8 @@ def extract_bag_to_csv(bag_dir_path, save_dir='/root/f1tenth_ws/f1tenth_data', r
         print(f"{bag_name}: {robot_name} scan/drive 데이터가 없어 건너뜁니다 "
               f"(scans={len(scans)}, drives={len(drives)})")
         return 0
+    if not odoms:
+        print(f"  경고: {odom_topic} 가 없어 odom_speed 컬럼은 NaN으로 기록됨")
 
     if time_source == 'auto':
         use_header = (header_stamps_valid(drive_headers, 'drive')
@@ -151,7 +176,7 @@ def extract_bag_to_csv(bag_dir_path, save_dir='/root/f1tenth_ws/f1tenth_data', r
         print(f"  time_source=auto -> {time_source}")
     if time_source == 'header':
         return _write_header_rows(csv_file_path, scans, scan_headers, drives, drive_headers,
-                                  scan_downsample_factor)
+                                  scan_downsample_factor, odoms)
 
     # wall(ns) -> sim(ns) 선형보간 매핑. /clock 앵커 사이의 기울기 = 그 구간의 국소 RTF.
     # 따라서 RTF가 시간에 따라 출렁여도 자동으로 보정됨. (구간 밖은 np.interp가 양 끝값으로 클램프)
@@ -169,6 +194,9 @@ def extract_bag_to_csv(bag_dir_path, save_dir='/root/f1tenth_ws/f1tenth_data', r
     drives.sort(key=lambda r: r[0])
 
     scan_bag_stamps = [s[0] for s in scans]
+    # receipt 경로: odom도 bag 기록 시각 기준으로 drive 수신 시각에 보간 (header 경로와 같은 의미)
+    drive_odom_speed = odom_speed_at([d[0] for d in drives], [o[0] for o in odoms],
+                                     [o[2] for o in odoms])
 
     # Pass 2: 각 drive에 대해 bag_ns <= drive_bag_ns인 가장 최근 scan을 인과적으로 매칭함
     # (drive보다 미래의 센서값은 절대로 사용하지 않음)
@@ -178,6 +206,7 @@ def extract_bag_to_csv(bag_dir_path, save_dir='/root/f1tenth_ws/f1tenth_data', r
     header = (
         ['time', 'steer', 'desired_speed', 'lidar_delay']
         + [f'lidar_{i}' for i in range(scan_downsample_factor)]
+        + ['odom_speed']
     )
     csv_writer.writerow(header)
 
@@ -186,7 +215,7 @@ def extract_bag_to_csv(bag_dir_path, save_dir='/root/f1tenth_ws/f1tenth_data', r
     skipped_burst = 0
     last_written_sim_ns = None
 
-    for drive_bag_ns, steer, desired_speed in drives:
+    for d_idx, (drive_bag_ns, steer, desired_speed) in enumerate(drives):
         # bag_ts(wall)를 /clock 보간으로 고해상도 sim-time으로 환산
         drive_sim_ns = wall_to_sim_ns(drive_bag_ns)
 
@@ -211,7 +240,8 @@ def extract_bag_to_csv(bag_dir_path, save_dir='/root/f1tenth_ws/f1tenth_data', r
         lidar_delay = (drive_sim_ns - scan_sim_ns) * 1e-9
 
         # time 컬럼: drive의 고해상도 sim-time
-        row = [drive_sim_ns * 1e-9, steer, desired_speed, lidar_delay] + ranges_row
+        row = ([drive_sim_ns * 1e-9, steer, desired_speed, lidar_delay] + ranges_row
+               + [float(drive_odom_speed[d_idx])])
         csv_writer.writerow(row)
         count_written += 1
         last_written_sim_ns = drive_sim_ns
@@ -223,8 +253,10 @@ def extract_bag_to_csv(bag_dir_path, save_dir='/root/f1tenth_ws/f1tenth_data', r
     return count_written
 
 
-def _write_header_rows(csv_file_path, scans, scan_headers, drives, drive_headers, num_beams):
-    """drive마다 한 행: time = drive header.stamp, LiDAR = 그 시각 이전(<=)의 가장 최근 scan."""
+def _write_header_rows(csv_file_path, scans, scan_headers, drives, drive_headers, num_beams, odoms=()):
+    """drive마다 한 행: time = drive header.stamp, LiDAR = 그 시각 이전(<=)의 가장 최근 scan,
+    odom_speed = 그 시각의 odom twist.linear.x (명령을 내리는 순간의 측정 속도, 맨 끝 컬럼)."""
+    drive_odom_speed = odom_speed_at(drive_headers, [o[1] for o in odoms], [o[2] for o in odoms])
     scan_order = np.argsort(np.asarray(scan_headers, dtype=np.int64), kind='stable')
     scan_stamps = [scan_headers[i] for i in scan_order]
     drive_order = list(np.argsort(np.asarray(drive_headers, dtype=np.int64), kind='stable'))
@@ -239,7 +271,7 @@ def _write_header_rows(csv_file_path, scans, scan_headers, drives, drive_headers
     with open(csv_file_path, 'w', newline='') as csv_file:
         csv_writer = csv.writer(csv_file)
         csv_writer.writerow(['time', 'steer', 'desired_speed', 'lidar_delay']
-                            + [f'lidar_{i}' for i in range(num_beams)])
+                            + [f'lidar_{i}' for i in range(num_beams)] + ['odom_speed'])
         for d_idx in drive_order:
             drive_ns = drive_headers[d_idx]
             _, steer, desired_speed = drives[d_idx]
@@ -250,7 +282,7 @@ def _write_header_rows(csv_file_path, scans, scan_headers, drives, drive_headers
             scan_ns = scan_stamps[s_pos]
             ranges_row = scans[scan_order[s_pos]][1]
             csv_writer.writerow([drive_ns * 1e-9, steer, desired_speed, (drive_ns - scan_ns) * 1e-9]
-                                + ranges_row)
+                                + ranges_row + [float(drive_odom_speed[d_idx])])
             count_written += 1
     print(f"추출 완료(header stamp 기준)! 총 {count_written}개의 행이 기록됨. "
           f"(인과 매칭 실패 스킵: {skipped_no_match}, 끝의 STOP 정지 명령 제외: {dropped_stop})")

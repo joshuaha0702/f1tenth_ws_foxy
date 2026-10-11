@@ -11,6 +11,9 @@
   6) 진행 중 /car1/chassis_bumper_states, /car2/chassis_bumper_states 를 감시
   7) 시퀀스 길이 도달 시 STOP → bag 종료 → episode_info.yaml(t_start/t_end) 기록 →
      충돌 여부에 따라 clean/ 또는 collision/ 으로 이동
+  8) bag의 odom 이동거리로 차량이 실제로 움직였는지 확인. drive 체인이 죽어
+     (sticky 고장) 재시도로도 안 움직이면 fatal 로그 후 비정상 종료 → launch가
+     끝나고 run_episodes.sh가 start_episode:=<다음 에피소드>로 재시작한다.
 """
 
 import os
@@ -42,6 +45,15 @@ from rcl_interfaces.srv import SetParameters
 from rcl_interfaces.msg import Parameter as ParameterMsg, ParameterValue, ParameterType
 
 
+class DriveChainDead(Exception):
+    """drive 명령을 받는데도 차량이 계속 안 움직임 → 이 launch로는 더 수집 불가."""
+
+
+class DeadAgent(DriveChainDead):
+    """에이전트(End2Race 등)가 살아 있는데 /carN/drive를 한 번도 안 냄 → 새 프로세스만이 해결책.
+    DriveChainDead와 같은 경로(exit code 3 → run_episodes.sh 재시작)로 맵을 중단한다."""
+
+
 def yaw_deg_to_quat(yaw_deg: float):
     yaw = math.radians(yaw_deg)
     return (0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0))
@@ -59,6 +71,9 @@ class EpisodeManagerNode(Node):
         self.declare_parameter('car1_planner', True)
         # car2(선두차)도 같은 규칙: End2Race 선두차 모델 평가 시 false.
         self.declare_parameter('car2_planner', True)
+        # 이 인덱스 미만 에피소드는 건너뜀 (drive 체인 고장으로 중단된 맵을 이어서 수집).
+        # 0이면 yaml의 start_episode(없으면 0)를 씀.
+        self.declare_parameter('start_episode', 0)
 
         yaml_path = self.get_parameter('episodes_yaml').value
         self.head2head = bool(self.get_parameter('head2head').value)
@@ -66,6 +81,8 @@ class EpisodeManagerNode(Node):
         self.do_record = str(record_param).lower() == 'true'
         self.car1_planner = str(self.get_parameter('car1_planner').value).lower() == 'true'
         self.car2_planner = str(self.get_parameter('car2_planner').value).lower() == 'true'
+        # main()이 종료 코드로 씀. drive 체인 고장으로 맵을 중단하면 비정상 코드.
+        self.exit_code = 0
 
         # yaml 로드 + 엄격 검증. 실패 시 fatal 로그 후 즉시 종료(비정상 exit code).
         self.cfg = self._load_and_validate_yaml(yaml_path)
@@ -88,6 +105,9 @@ class EpisodeManagerNode(Node):
             f'/{car}/{kind}' for car in cars for kind in ('drive', 'odom', 'scan')
         ]
         self.record_topics = list(out.get('record_topics', default_topics))
+        # 이동 검사: drive로 평균 MIN_CMD_SPEED 넘게 명령했는데 odom 경로 길이가
+        # 이보다 짧으면 stuck (/carN/drive → ackermann_to_twist → Gazebo 플러그인 체인 고장)
+        self.min_motion_m = float(out.get('min_motion_m', 1.0))
         # 레코더가 잠깐 밀려도 버티도록 수신 큐를 깊게 잡는다. 발행 측 QoS가 모두
         # reliable/volatile이라 맞춰줌. --max-cache-size는 쓰지 않음: Foxy(rosbag2
         # 0.3.11)는 종료 시 캐시에 남은 메시지를 버려 에피소드 끝 ~2 s가 사라짐.
@@ -108,6 +128,22 @@ class EpisodeManagerNode(Node):
         if not self.episodes:
             self.get_logger().fatal('failed to build episode list')
             raise RuntimeError('No episodes to run')
+        # 에피소드 목록은 항상 전부 생성(난수 순서 유지)한 뒤 앞부분만 건너뛴다 →
+        # 재시작해도 ep 인덱스별 초기조건/seed가 처음 실행과 같음.
+        start_param = int(self.get_parameter('start_episode').value or 0)
+        self.start_episode = start_param if start_param > 0 else int(self.cfg.get('start_episode', 0) or 0)
+        if self.start_episode >= len(self.episodes):
+            self.get_logger().warn(
+                f'start_episode={self.start_episode} >= num_episodes={len(self.episodes)} — nothing to run'
+            )
+
+        # stuck 추적: 차량별 연속 stuck 실행 횟수, 마지막 시도가 stuck이었던 연속 에피소드 수
+        self._stuck_runs = {}
+        self._stuck_strikes = 0
+        self._ep_attempts = 0
+        self._ep_stuck_attempts = 0
+        # dead-agent 추적: 재시도를 다 써도 drive가 비어 있던(에이전트 무응답) 연속 에피소드 수
+        self._dead_agent_strikes = 0
 
         # Publishers
         self.control_pub = self.create_publisher(String, '/episode/control', 10)
@@ -173,7 +209,7 @@ class EpisodeManagerNode(Node):
         self.get_logger().info(
             f'EpisodeManager loaded: {len(self.episodes)} episodes, '
             f'duration={self.sequence_duration_sec}s sim, head2head={self.head2head}, '
-            f'record={self.do_record}'
+            f'record={self.do_record}, start_episode={self.start_episode}'
         )
 
         # 에피소드 루프는 별도 스레드에서 돌림.
@@ -328,6 +364,22 @@ class EpisodeManagerNode(Node):
         out = cfg.get('output', {})
         if not isinstance(out, dict):
             self._yaml_die(f'output must be a mapping, got {type(out).__name__}')
+        if 'min_motion_m' in out:
+            try:
+                mm = float(out['min_motion_m'])
+            except (TypeError, ValueError):
+                self._yaml_die(f'output.min_motion_m must be a number, got {out["min_motion_m"]!r}')
+            if mm < 0:
+                self._yaml_die(f'output.min_motion_m must be >= 0, got {mm}')
+
+        # ---- start_episode (옵션) ----
+        if 'start_episode' in cfg:
+            try:
+                se = int(cfg['start_episode'])
+            except (TypeError, ValueError):
+                self._yaml_die(f'start_episode must be an integer, got {cfg["start_episode"]!r}')
+            if se < 0:
+                self._yaml_die(f'start_episode must be >= 0, got {se}')
 
         # ---- random_seed (옵션) ----
         seed = cfg.get('random_seed')
@@ -537,12 +589,21 @@ class EpisodeManagerNode(Node):
     def _episode_thread_main(self):
         # 메인 스레드의 rclpy.spin이 시동될 시간을 잠깐 줌
         time.sleep(0.5)
+        aborted = False
         try:
             self._run_all_episodes()
+        except DriveChainDead:
+            # fatal 로그는 이미 출력됨. 비정상 exit code로 launch를 끝낸다
+            # (run_episodes.sh가 로그의 'aborting map'을 보고 재시작). DeadAgent도 여기로 옴.
+            aborted = True
+            self.exit_code = 3
         except Exception as e:
             self.get_logger().error(f'episode loop crashed: {e}')
         finally:
-            self.get_logger().info('All episodes done — shutting down.')
+            if aborted:
+                self.get_logger().info('Map aborted — shutting down.')
+            else:
+                self.get_logger().info('All episodes done — shutting down.')
             if rclpy.ok():
                 rclpy.shutdown()
 
@@ -729,7 +790,13 @@ class EpisodeManagerNode(Node):
                 )
             time.sleep(0.05)
 
+        if self.start_episode > 0:
+            self.get_logger().info(f'resuming from ep{self.start_episode:04d}')
         for idx, ep in enumerate(self.episodes):
+            if idx < self.start_episode:
+                continue
+            self._ep_attempts = 0
+            self._ep_stuck_attempts = 0
             for attempt in range(self.record_retries + 1):
                 if self._run_one_episode(idx, ep, retry_left=attempt < self.record_retries):
                     break
@@ -873,6 +940,23 @@ class EpisodeManagerNode(Node):
             except Exception as e:  # 검사 실패로 수집을 멈추진 않음 (validator가 다시 봄)
                 problems = []
                 self.get_logger().warn(f'[{ep_label}] bag check failed: {e}')
+            # 이동 검사: drive 명령은 나갔는데 차가 안 움직였으면 stuck
+            cars = ['car1', 'car2'] if self.head2head else ['car1']
+            path_m, stuck_cars = {}, []
+            try:
+                motion_problems, path_m, cmd_speed = self.motion_problems(
+                    staging_bag_path, t_start, t_end, cars, self.min_motion_m)
+                problems += motion_problems
+                stuck_cars = [car for car in cars if any(
+                    p.startswith(f'{car} stuck') for p in motion_problems)]
+                self.get_logger().info(
+                    f'[{ep_label}] motion: ' + ', '.join(
+                        f'{car} path={path_m.get(car, 0.0):.2f}m cmd={cmd_speed.get(car, 0.0):.2f}m/s'
+                        for car in cars)
+                )
+            except Exception as e:
+                self.get_logger().warn(f'[{ep_label}] motion check failed: {e}')
+            self._note_stuck(cars, stuck_cars)
             if problems and retry_left:
                 self.get_logger().warn(
                     f'[{ep_label}] bag incomplete — {"; ".join(problems)} — discarding and retrying'
@@ -881,6 +965,35 @@ class EpisodeManagerNode(Node):
                 return False
             if problems:
                 self.get_logger().warn(f'[{ep_label}] bag incomplete, out of retries — {"; ".join(problems)}')
+            # 에이전트가 drive를 한 번도 안 냈으면 주차된 차가 받힌 것처럼 채점되지 않도록
+            # bag을 버린다(완료 로그 없음 → 재시작 시 이 에피소드부터 다시 돈다).
+            dead_topics = self.dead_agent_topics(problems, self.head2head and not self.car2_planner)
+            if dead_topics:
+                shutil.rmtree(staging_bag_path, ignore_errors=True)
+                abort = self._dead_agent_abort(dead_topics)
+                self.get_logger().error(
+                    f'[{ep_label}] DEAD-AGENT — {", ".join(dead_topics)} never published — bag deleted '
+                    f'(strike {self._dead_agent_strikes}/{self.DEAD_AGENT_STRIKES_ABORT})'
+                )
+                if abort:
+                    for topic in dead_topics:
+                        self.get_logger().fatal(
+                            f'[dead-agent] {topic} never published for {self._dead_agent_strikes} '
+                            f'episodes — aborting map'
+                        )
+                    raise DeadAgent(', '.join(dead_topics))
+                return True
+            self._dead_agent_strikes = 0
+            if self._stuck_abort(stuck_cars):
+                # 고장은 sticky라 재시도로 안 풀림. 이 bag은 버려서(완료 로그 없음)
+                # 재시작 때 이 에피소드부터 다시 돈다.
+                shutil.rmtree(staging_bag_path, ignore_errors=True)
+                for car in stuck_cars:
+                    self.get_logger().fatal(
+                        f'[stuck] {car} has not moved for {self._stuck_runs.get(car, 0)} '
+                        f'episodes — drive chain dead, aborting map'
+                    )
+                raise DriveChainDead(', '.join(stuck_cars))
             # validate_episodes.py가 bag이 [t_start, t_end]를 다 덮는지 확인하는 데 씀
             try:
                 with open(os.path.join(staging_bag_path, 'episode_info.yaml'), 'w') as f:
@@ -890,6 +1003,8 @@ class EpisodeManagerNode(Node):
                         'verdict': 'collision' if collided else 'clean',
                         'collision_source': self._collision_source,
                         'recorder_ready': recorder_ready,
+                        'path_m': {car: round(float(v), 3) for car, v in path_m.items()},
+                        'stuck': stuck_cars,
                     }, f)
             except OSError as e:
                 self.get_logger().error(f'[{ep_label}] episode_info.yaml write failed: {e}')
@@ -904,6 +1019,98 @@ class EpisodeManagerNode(Node):
         else:
             self.get_logger().info(f'[{ep_label}] {verdict} (no bag recorded)')
         return True
+
+    def _note_stuck(self, cars, stuck_cars):
+        """시도 1회의 stuck 여부를 누적 (차량별 연속 stuck 실행 수, 이번 에피소드 시도 수)."""
+        self._ep_attempts += 1
+        if stuck_cars:
+            self._ep_stuck_attempts += 1
+        for car in cars:
+            self._stuck_runs[car] = self._stuck_runs.get(car, 0) + 1 if car in stuck_cars else 0
+
+    def _stuck_abort(self, stuck_cars) -> bool:
+        """에피소드의 마지막 시도 결과로 맵 중단 여부 판단 (stuck_strikes 갱신).
+        모든 시도(2회 이상)가 stuck이었거나, 마지막 시도가 stuck인 에피소드가
+        STUCK_STRIKES_ABORT개 연속되면 True."""
+        if not stuck_cars:
+            self._stuck_strikes = 0
+            return False
+        self._stuck_strikes += 1
+        all_attempts_stuck = (self._ep_attempts > 1
+                              and self._ep_stuck_attempts == self._ep_attempts)
+        return all_attempts_stuck or self._stuck_strikes >= self.STUCK_STRIKES_ABORT
+
+    @staticmethod
+    def dead_agent_topics(problems, watch_car2: bool) -> list:
+        """재시도를 다 쓴 뒤의 problems에서 '에이전트 무응답' drive 토픽 목록을 뽑는다.
+        car1은 항상, car2는 End2Race 선두차(car2_planner=false)일 때만 본다
+        (lattice 선두차의 drive 공백은 기존 stuck/bag 검사가 다룸)."""
+        topics = ['/car1/drive'] + (['/car2/drive'] if watch_car2 else [])
+        return [t for t in topics if f'{t} empty' in problems]
+
+    def _dead_agent_abort(self, dead_topics) -> bool:
+        """dead-agent 에피소드 1개를 누적하고 맵 중단 여부 반환."""
+        if not dead_topics:
+            self._dead_agent_strikes = 0
+            return False
+        self._dead_agent_strikes += 1
+        return self._dead_agent_strikes >= self.DEAD_AGENT_STRIKES_ABORT
+
+    # drive를 한 번도 안 낸 에피소드가 이만큼 연속되면 맵 중단 (새 에이전트 프로세스로 재시작)
+    DEAD_AGENT_STRIKES_ABORT = 2
+
+    # stuck 판정: 평균 명령 속도가 이보다 크면 움직였어야 함
+    MIN_CMD_SPEED = 0.5
+    # 마지막 시도가 stuck인 에피소드가 이만큼 연속되면 맵 중단
+    STUCK_STRIKES_ABORT = 2
+
+    @staticmethod
+    def motion_problems(bag_path, t_start, t_end, cars, min_motion_m=1.0,
+                        min_cmd_speed=MIN_CMD_SPEED):
+        """[t_start, t_end] 동안 차량별 odom 경로 길이(m)와 /<car>/drive 평균 명령 속도
+        (m/s)를 bag에서 계산. 명령 속도 > min_cmd_speed 인데 경로 < min_motion_m 이면
+        '<car> stuck (...)' 문제로 보고. 반환: (problems, path_m, cmd_speed).
+        rclpy 노드 없이도 호출 가능 (기존 bag 단위 테스트용)."""
+        dbs = [f for f in os.listdir(bag_path) if f.endswith('.db3')]
+        if not dbs:
+            return ['no .db3 file'], {}, {}
+        con = sqlite3.connect(os.path.join(bag_path, dbs[0]))
+        try:
+            topics = {name: (tid, typ) for tid, name, typ
+                      in con.execute('SELECT id, name, type FROM topics')}
+
+            def read(topic):
+                # (header stamp, msg) 목록. 토픽이 없으면 빈 목록
+                if topic not in topics:
+                    return []
+                tid, typ = topics[topic]
+                msg_cls = get_message(typ)
+                out = []
+                for (data,) in con.execute(
+                        'SELECT data FROM messages WHERE topic_id=? ORDER BY timestamp', (tid,)):
+                    msg = deserialize_message(data, msg_cls)
+                    st = msg.header.stamp
+                    t = st.sec + st.nanosec * 1e-9
+                    if t_start - 1e-6 <= t <= t_end + 1e-6:
+                        out.append((t, msg))
+                out.sort(key=lambda tm: tm[0])
+                return out
+
+            problems, path_m, cmd_speed = [], {}, {}
+            for car in cars:
+                odom = read(f'/{car}/odom')
+                pts = [(m.pose.pose.position.x, m.pose.pose.position.y) for _, m in odom]
+                path_m[car] = sum(math.hypot(x1 - x0, y1 - y0)
+                                  for (x0, y0), (x1, y1) in zip(pts, pts[1:]))
+                speeds = [abs(m.drive.speed) for _, m in read(f'/{car}/drive')]
+                cmd_speed[car] = sum(speeds) / len(speeds) if speeds else 0.0
+                if path_m[car] < min_motion_m and cmd_speed[car] > min_cmd_speed:
+                    problems.append(
+                        f'{car} stuck (moved {path_m[car]:.2f} m, commanded {cmd_speed[car]:.1f} m/s)'
+                    )
+            return problems, path_m, cmd_speed
+        finally:
+            con.close()
 
     # 토픽별 허용 오차(s): 시작/끝에서 빠져도 되는 길이, 중간 최대 간격
     BAG_EDGE_TOL = {'drive': 0.02, 'odom': 0.02, 'scan': 0.1}
@@ -976,6 +1183,8 @@ def main(args=None):
         except KeyboardInterrupt:
             pass
         finally:
+            # drive 체인 고장으로 맵 중단 시 비정상 종료 → launch가 끝남
+            exit_code = exit_code or node.exit_code
             try:
                 node.destroy_node()
             except Exception:

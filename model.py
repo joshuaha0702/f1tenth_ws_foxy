@@ -2,9 +2,15 @@ import torch
 import torch.nn as nn
 from typing import Optional, Tuple
 
+def speed_dims_from_state_dict(state_dict) -> int:
+    """Width of the speed input of an End2Race checkpoint (plain state_dict): 1 for the
+    'command'/'odom' models, 2 for train.py --speed_input hybrid ([odom, previous command])."""
+    return int(state_dict["speed_mlp.0.weight"].shape[1])
+
+
 class End2Race(nn.Module):
 
-    def __init__(self, mask_prob=0.0, hidden_scale=4):
+    def __init__(self, mask_prob=0.0, hidden_scale=4, speed_dims=1):
         super(End2Race, self).__init__()
         
         # Store configuration
@@ -12,6 +18,7 @@ class End2Race(nn.Module):
         num_actions=2
         self.mask_prob = mask_prob
         self.hidden_scale = hidden_scale
+        self.speed_dims = speed_dims
         
         # Common: Learnable sensor preprocessing parameter
         k_init = (-1 / 10.0) * torch.log(torch.tensor(0.01) / (2 - torch.tensor(0.01)))
@@ -19,7 +26,7 @@ class End2Race(nn.Module):
         
         # Speed-specific modules (only created if needed)
         self.speed_mlp = nn.Sequential(
-            nn.Linear(1, num_features // 6),
+            nn.Linear(speed_dims, num_features // 6),
             nn.ReLU()
         )
         self.dummy_embedding = nn.Parameter(torch.randn(1, num_features // 6))
@@ -70,7 +77,7 @@ class End2Race(nn.Module):
         
         Args:
             x: LiDAR input tensor [batch, seq_len, num_features]
-            speed_input: Previous speed tensor [batch, seq_len, 1]
+            speed_input: Speed tensor [batch, seq_len, speed_dims]
             hidden: Hidden state from previous timestep
             
         Returns:
