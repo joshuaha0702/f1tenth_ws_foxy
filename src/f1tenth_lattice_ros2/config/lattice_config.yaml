@@ -61,19 +61,16 @@ car1:
     - 0.4
     - 0.5
     - 0.05
-    - 0.0
+    - 5.0
   minL: 0.8
   maxL: 2.0
   Lscale: 4.0
   minP: 0.4
   maxP: 0.7
 
-  # === 선두 차량 추종(following) 모드 ===
+  # === 선두 차량 추종(following) 모드 (장애물 회피를 위해 기본 비활성화) ===
   follow:
-    zones:
-      - { min: 90,  max: 140 }
-      - { min: 210, max: 235 }
-      - { min: 0, max: 15 }
+    zones: []
     lateral_align_m: 3.0
     desired_gap_m: 1.5
     kp_gap: 0.8

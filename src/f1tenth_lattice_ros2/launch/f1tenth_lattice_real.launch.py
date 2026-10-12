@@ -15,6 +15,11 @@ def generate_launch_description():
     default_amcl_config = os.path.join(lattice_pkg, 'config', 'amcl_config.yaml')
 
     # --- Launch Arguments ---
+    map_arg = DeclareLaunchArgument(
+        'map',
+        default_value='',
+        description='Name of the map folder (alias for map_name, e.g. map_20260929_173637)'
+    )
     map_name_arg = DeclareLaunchArgument(
         'map_name',
         default_value='monza_track',
@@ -59,9 +64,14 @@ def generate_launch_description():
     plan_freq = LaunchConfiguration('plan_freq')
     loc_mode = LaunchConfiguration('loc_mode')
 
+    # 'map' 인자가 주어지면 map 우선, 아니면 'map_name' (기본값: monza_track) 사용
+    effective_map_name = PythonExpression([
+        "'", LaunchConfiguration('map'), "' if '", LaunchConfiguration('map'), "' != '' else '", map_name, "'"
+    ])
+
     # --- Dynamic Path Resolution ---
-    map_dir = PythonExpression(["'", lattice_pkg, "/maps/' + '", map_name, "'"])
-    map_yaml_file = PythonExpression(["'", map_dir, "/' + '", map_name, "_map.yaml'"])
+    map_dir = PythonExpression(["'", lattice_pkg, "/maps/' + '", effective_map_name, "'"])
+    map_yaml_file = PythonExpression(["'", map_dir, "/' + '", effective_map_name, "_map.yaml'"])
     default_dynamic_raceline = PythonExpression(["'", map_dir, "/raceline1.csv'"])
 
     raceline_arg = DeclareLaunchArgument(
@@ -211,6 +221,7 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        map_arg,
         map_name_arg,
         raceline_arg,
         config_arg,

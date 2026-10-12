@@ -34,3 +34,13 @@ src/f1tenth_gym_ros/
 src/f1tenth_end2race_ros2/models/ego_variants*
 src/f1tenth_end2race_ros2/models/leader_variants*
 !src/f1tenth_end2race_ros2/models/ego_variants12s_cosine_20261006*
+
+# f1tenth_system 심볼릭 링크 (별도 저장소)
+src/ackermann_mux
+src/f1tenth_stack
+src/vesc
+src/sllidar_ros2
+src/teleop_tools
+src/scripts
+src/README.md
+src/LICENSE
