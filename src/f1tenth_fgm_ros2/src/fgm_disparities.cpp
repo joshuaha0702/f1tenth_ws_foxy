@@ -36,8 +36,8 @@ public:
         std::string lidar_pub_topic = this->declare_parameter("lidar_pub_topic", "disparity_lidar");
         std::string arrow_marker_topic = this->declare_parameter("arrow_marker_topic", "direction_marker");
 
-        car_length = this->declare_parameter("car_length", 0.33);
-        car_width = this->declare_parameter("car_width", 0.20);
+        car_length = this->declare_parameter("car_length", 0.325);
+        car_width = this->declare_parameter("car_width", 0.22);
         max_speed = this->declare_parameter("max_speed", 2.0);
         min_speed = this->declare_parameter("min_speed", 0.5);
         max_steering_angle = this->declare_parameter("max_steering_angle", 0.4189);

@@ -29,8 +29,8 @@ def _compute_clothoid_chunk(args):
 
 
 class LatticePlanner:
-    def __init__(self, conf, map_path, wpt_path, wb=0.33):
-        self.wheelbase = wb
+    def __init__(self, conf, map_path, wpt_path, wb=0.325):
+        self.wheelbase = float(getattr(conf, 'wheelbase', wb))
 
         # load waypoints: reorder to (x, y, v, heading, s)
         raw = np.loadtxt(wpt_path, delimiter=';', skiprows=2)
@@ -88,7 +88,7 @@ class LatticePlanner:
         self.step = 0
         self.last_timing = None
 
-        self.tracker = PurePursuitPlanner(conf, wpt_path, wb=wb)
+        self.tracker = PurePursuitPlanner(conf, wpt_path, wb=self.wheelbase)
         self.conf = conf
 
         # --- [수정] 맵 YAML 및 이미지 로딩 경로 예외 처리 보완 ---
@@ -297,7 +297,7 @@ class LatticePlanner:
         cost_weights = self.cost_weights
         n, k = self.traj_num, self.v_lattice_num
 
-        mean_k, _ = get_curvature(all_traj, all_traj_clothoid)
+        mean_k, _ = get_curvature(all_traj, all_traj_clothoid, wheelbase=self.wheelbase)
         cost = np.zeros(self.traj_num)
 
         for func in self.shape_cost_funcs:
@@ -388,14 +388,13 @@ def get_follow_optim_cost(traj, traj_clothoid, opp_poses=None, ego_pose=None,
     return cost
 
 
-def get_curvature(traj, traj_clothoid):
+def get_curvature(traj, traj_clothoid, wheelbase=0.325):
     k0 = traj_clothoid[:, 3].reshape(-1, 1)
     dk = traj_clothoid[:, 4].reshape(-1, 1)
     s = traj_clothoid[:, -1]
     s_pts = np.linspace(np.zeros_like(s), s, num=traj.shape[1]).T
     traj_k = k0 + dk * s_pts
     traj_k_abs = np.abs(traj_k)
-    wheelbase = 0.33
     traj_steer = np.arctan(wheelbase * traj_k)
     max_steer = np.max(np.abs(traj_steer), axis=1)
     mean_k = np.mean(traj_k_abs, axis=1)

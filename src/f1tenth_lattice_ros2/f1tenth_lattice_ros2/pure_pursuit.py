@@ -6,8 +6,8 @@ from f1tenth_lattice_ros2.planner_utils import (
 
 
 class PurePursuitPlanner:
-    def __init__(self, conf, wpt_path, wb=0.33):
-        self.wheelbase = wb
+    def __init__(self, conf, wpt_path, wb=0.325):
+        self.wheelbase = float(getattr(conf, 'wheelbase', wb))
         self.conf = conf
         self.max_reacquire = 20.0
 

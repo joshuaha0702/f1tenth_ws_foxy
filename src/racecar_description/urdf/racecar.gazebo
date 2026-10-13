@@ -51,7 +51,7 @@
         <right_steering_joint>right_steering_hinge_joint</right_steering_joint>
         
         
-        <wheel_separation>0.2</wheel_separation>
+        <wheel_separation>0.22</wheel_separation>
         <wheel_diameter>0.1</wheel_diameter>
         <wheelbase>0.325</wheelbase>
         <max_wheel_torque>5000</max_wheel_torque>

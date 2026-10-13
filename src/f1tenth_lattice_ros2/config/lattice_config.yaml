@@ -109,4 +109,4 @@ lh_grid_ub: 0.6
 # [수정] 전방 주시 거리(Lookahead)를 1.0m -> 1.6m로 확장
 # 실차 서보/VESC 반응 지연을 커버하여 직선 주행 시 뱀처럼 흔들리는 현상 제거
 lookahead_distance: 1.6
-wheelbase: 0.33
+wheelbase: 0.325

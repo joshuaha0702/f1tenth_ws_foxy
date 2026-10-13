@@ -31,6 +31,7 @@ maxP: 0.8
 Pscale: 8.0
 D: 0.2
 interpScale: 10
+wheelbase: 0.325
 
 # 실차 추종 보강은 시뮬 수집에서 끈다 (기존 수집 데이터와 같은 추종 정책 유지).
 adaptive_lookahead: false
