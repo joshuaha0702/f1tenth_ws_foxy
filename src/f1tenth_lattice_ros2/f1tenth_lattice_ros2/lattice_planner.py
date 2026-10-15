@@ -1,6 +1,7 @@
 import os
 import logging
 import time
+import math
 import yaml
 import numpy as np
 from PIL import Image
@@ -163,12 +164,23 @@ class LatticePlanner:
             cost_weights = np.array([1 / n] * n)
         self.cost_weights = cost_weights
 
-    def plan(self, pose_x, pose_y, pose_theta, opp_poses, velocity, waypoints=None, dt=None):
+    def plan(self, pose_x, pose_y, pose_theta, opp_poses, velocity, waypoints=None, dt=None, opp_vels=None):
         self.step += 1
         if waypoints is None:
             waypoints = self.waypoints
 
         self.opp_dt = dt if (dt is not None and dt > 1e-6) else self.time_interval
+
+        # opp_poses 형식 지원: (N, 5) 형태 [x, y, theta, vx, vy] 또는 (N, 3) + opp_vels
+        if opp_poses is not None and len(opp_poses) > 0:
+            if opp_poses.shape[1] >= 5 and opp_vels is None:
+                opp_vels = opp_poses[:, 3:5]
+                opp_poses = opp_poses[:, :3]
+            elif opp_poses.shape[1] > 3:
+                opp_poses = opp_poses[:, :3]
+        else:
+            opp_poses = np.empty((0, 3))
+            opp_vels = np.empty((0, 2))
 
         ego_pose = np.array([pose_x, pose_y, pose_theta])
         _, _, t, nearest_i = nearest_point(ego_pose[:2], waypoints[:, 0:2])
@@ -207,7 +219,9 @@ class LatticePlanner:
         all_traj = np.array(all_traj)
         all_traj_clothoid = np.array(all_traj_clothoid)
         _t_clothoid1 = time.perf_counter()
-        traj_cost, abs_v_cost, collision_cost = self._eval(all_traj, all_traj_clothoid, opp_poses, ego_pose)
+        traj_cost, abs_v_cost, collision_cost = self._eval(
+            all_traj, all_traj_clothoid, opp_poses, ego_pose, opp_vels=opp_vels
+        )
         _t_eval1 = time.perf_counter()
         clothoid_ms = (_t_clothoid1 - _t_clothoid0) * 1000.0
         eval_ms = (_t_eval1 - _t_clothoid1) * 1000.0
@@ -293,7 +307,7 @@ class LatticePlanner:
         traj[:, 4] = wp[idx, 4]
         return traj
 
-    def _eval(self, all_traj, all_traj_clothoid, opp_poses, ego_pose):
+    def _eval(self, all_traj, all_traj_clothoid, opp_poses, ego_pose, opp_vels=None):
         cost_weights = self.cost_weights
         n, k = self.traj_num, self.v_lattice_num
 
@@ -325,9 +339,19 @@ class LatticePlanner:
             + cost_weights[-2] * (mean_k_lattice - all_traj_min_mean_k) * traj_v_lattice
         )
 
+        # opp_vels 준비: 외부에서 안정적으로 추정된 속도가 있으면 사용, 없으면 폴백 계산
+        if opp_vels is None or len(opp_vels) != len(opp_poses):
+            has_prev = (np.sum(np.abs(self.prev_opp_pose)) > 1e-6 and
+                        self.prev_opp_pose.shape[0] == opp_poses.shape[0])
+            vels = np.zeros((opp_poses.shape[0], 2), dtype=np.float64)
+            if has_prev and self.opp_dt > 1e-6:
+                vels = (opp_poses[:, :2] - self.prev_opp_pose[:, :2]) / self.opp_dt
+        else:
+            vels = np.ascontiguousarray(opp_vels, dtype=np.float64)
+
         collision_cost = cost_weights[-1] * get_obstacle_collision_with_v(
             all_traj, all_traj_clothoid, traj_v_lattice,
-            opp_poses, self.prev_opp_pose, self.opp_dt
+            opp_poses, vels, max_pred_time=2.0
         )
 
         cost = np.repeat(cost, k).reshape(n, k)
@@ -431,7 +455,7 @@ def get_map_collision(traj, traj_clothoid, opp_poses=None, ego_pose=None,
 
 @njit(cache=True)
 def get_obstacle_collision_with_v(traj, traj_clothoid, v_lattice, opp_poses,
-                                   prev_oppo_pose, dt=None):
+                                   opp_vels, max_pred_time=2.0):
     n, m, _ = traj.shape
     k = v_lattice.shape[1]
     if opp_poses.shape[0] == 0:
@@ -447,14 +471,6 @@ def get_obstacle_collision_with_v(traj, traj_clothoid, v_lattice, opp_poses,
     traj_xyt[:, :, 0] = traj[:, :, 0]
     traj_xyt[:, :, 1] = traj[:, :, 1]
     traj_xyt[:, :, 2] = traj[:, :, 3]
-
-    has_prev = (np.sum(np.abs(prev_oppo_pose)) > 1e-6 and
-                prev_oppo_pose.shape[0] == opp_poses.shape[0])
-    opp_vels = np.zeros((opp_poses.shape[0], 2))
-    if has_prev and dt > 1e-6:
-        for oi in range(opp_poses.shape[0]):
-            opp_vels[oi, 0] = (opp_poses[oi, 0] - prev_oppo_pose[oi, 0]) / dt
-            opp_vels[oi, 1] = (opp_poses[oi, 1] - prev_oppo_pose[oi, 1]) / dt
 
     traj_arc_lengths = np.zeros((n, m))
     for i in range(n):
@@ -475,15 +491,19 @@ def get_obstacle_collision_with_v(traj, traj_clothoid, v_lattice, opp_poses,
             max_collision_cost = 0.0
             for j in range(m):
                 t_reach = traj_arc_lengths[i, j] / ego_v
-                if t_reach > 0.5:
-                    t_reach = 0.5
+                if t_reach > max_pred_time:
+                    t_reach = max_pred_time
                 ego_point = tr[j]
                 ego_box = get_vertices(ego_point, col_length, col_width)
                 for oi in range(opp_poses.shape[0]):
                     predicted_opp = np.empty(3)
                     predicted_opp[0] = opp_poses[oi, 0] + opp_vels[oi, 0] * t_reach
                     predicted_opp[1] = opp_poses[oi, 1] + opp_vels[oi, 1] * t_reach
-                    predicted_opp[2] = opp_poses[oi, 2]
+                    opp_speed = math.hypot(opp_vels[oi, 0], opp_vels[oi, 1])
+                    if opp_speed > 0.2:
+                        predicted_opp[2] = math.atan2(opp_vels[oi, 1], opp_vels[oi, 0])
+                    else:
+                        predicted_opp[2] = opp_poses[oi, 2]
                     opp_box = get_vertices(predicted_opp, col_length, col_width)
                     if collision(opp_box, ego_box):
                         point_cost = max_cost - j * (max_cost - min_cost) / m
