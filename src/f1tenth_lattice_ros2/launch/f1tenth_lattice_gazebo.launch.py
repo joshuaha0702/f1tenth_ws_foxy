@@ -101,6 +101,13 @@ def generate_launch_description():
     headless = LaunchConfiguration('headless')
     gui_value = PythonExpression(['"false" if "', headless, '".lower() == "true" else "true"'])
 
+    use_lidar_tracker_arg = DeclareLaunchArgument(
+        'use_lidar_tracker',
+        default_value='false',
+        description='상대차 odom 대신 실차와 동일하게 LiDAR 스캔으로 장애물 추적/회피 (true/false)'
+    )
+    use_lidar_tracker = LaunchConfiguration('use_lidar_tracker')
+
     # Spawn coordinates arguments (car1) — defaults from lattice_config.yaml
     x_arg = DeclareLaunchArgument('x', default_value=str(_s1.get('x', 6.4)), description='Car1 Spawn X position')
     y_arg = DeclareLaunchArgument('y', default_value=str(_s1.get('y', 16.0)), description='Car1 Spawn Y position')
@@ -267,6 +274,7 @@ def generate_launch_description():
             'max_speed': 3.0,
             'max_steering_angle': 0.4189,
             'opponent_namespace': 'car2',
+            'use_lidar_tracker': use_lidar_tracker,
             'use_sim_time': True,
         }]
     )
@@ -519,6 +527,7 @@ def generate_launch_description():
         map_arg,
         head2head_arg,
         headless_arg,
+        use_lidar_tracker_arg,
         config_arg,
         raceline_arg,
         x_arg,
