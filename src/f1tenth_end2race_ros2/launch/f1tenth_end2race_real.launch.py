@@ -3,7 +3,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
 
@@ -30,6 +30,10 @@ def generate_launch_description():
                     'train.py --speed_input odom으로 학습한 모델) 또는 hybrid([odom, 직전 출력], '
                     'train.py --speed_input hybrid)'
     )
+    use_norm_arg = DeclareLaunchArgument(
+        'use_norm', default_value='auto',
+        description='정규화 모델 사용 여부 (auto / true / false, 기본값: auto)'
+    )
     use_rviz_arg = DeclareLaunchArgument(
         'use_rviz', default_value='false',
         description='원격 모니터링용 RViz2 실행 여부 (실차에선 보통 false, 개발 PC에서 볼 때 true)'
@@ -37,17 +41,9 @@ def generate_launch_description():
 
     namespace = LaunchConfiguration('namespace')
     model_path = LaunchConfiguration('model_path')
+    use_norm = LaunchConfiguration('use_norm')
     use_rviz = LaunchConfiguration('use_rviz')
 
-    # ============================================================
-    # 노드 정의
-    # ============================================================
-    # Agent 노드 (실차) — scan 구독 → RNN 추론 → drive 발행 (반응형, odom/map 불필요)
-    # config 뒤 dict가 우선이라 model_path/robot_name이 config 값을 덮어씀.
-    #
-    # 실차 하드웨어 스택(LiDAR 드라이버, VESC)은 네임스페이스 없이 /scan, /drive를
-    # 사용하므로, agent_node가 robot_name으로 만드는 /{namespace}/scan,
-    # /{namespace}/drive 절대경로를 /scan, /drive로 remap한다.
     config_path = os.path.join(end2race_pkg, 'config', 'end2race_config.yaml')
     agent_node = Node(
         package=pkg_name,
@@ -60,11 +56,13 @@ def generate_launch_description():
             'model_path': model_path,
             'robot_name': namespace,
             'speed_input': LaunchConfiguration('speed_input'),
+            'use_norm': use_norm,
         }],
         remappings=[
             (['/', namespace, '/scan'], '/scan'),
             (['/', namespace, '/drive'], '/drive'),
             (['/', namespace, '/odom'], '/odom'),  # speed_input:=odom일 때만 구독
+            (['/', namespace, '/preprocess_scan'], '/preprocess_scan'),
         ]
     )
 
@@ -105,6 +103,7 @@ def generate_launch_description():
         namespace_arg,
         model_path_arg,
         speed_input_arg,
+        use_norm_arg,
         use_rviz_arg,
         record_bag_arg,
         agent_node,
