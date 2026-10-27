@@ -52,7 +52,10 @@ class JoyBagRecorderNode(Node):
             '/odom',
             '/drive',
             '/teleop',
-            '/ackermann_drive'
+            '/ackermann_drive',
+            '/planned_trajectory',
+            '/best_traj_marker',
+            '/obstacle_marker'
         ]
         if self.record_tf:
             self.record_topics.extend(['/tf', '/tf_static'])

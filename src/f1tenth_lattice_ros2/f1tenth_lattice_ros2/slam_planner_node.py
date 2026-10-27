@@ -161,8 +161,8 @@ class SlamLatticePlannerNode(Node):
         self.opp_vels = np.empty((0, 2))
         self.obstacle_tracker = MultiObstacleTracker(
             max_match_dist=1.2,
-            min_hits_to_confirm=2,
-            max_misses_to_delete=5
+            min_hits_to_confirm=3,
+            max_misses_to_delete=3
         )
         self._last_plan_time = None
         self.best_traj = None
@@ -355,7 +355,7 @@ class SlamLatticePlannerNode(Node):
         ym = self.pose_y + (sin_t * xb + cos_t * yb)
 
         # 4. 정적 맵 벽면 필터링 (Static Map Wall Filter)
-        # 벽면과 0.25m 이내인 점은 맵의 정적 벽면으로 간주하여 제거
+        # 벽면과 0.22m 이내인 점은 맵의 정적 벽면으로 간주하여 제거 (센서 노이즈/위치오차 마진 확보)
         dt = self.planner.dt
         orig_x, orig_y, orig_c, orig_s, height, width, resolution = self.planner.map_metainfo
 
@@ -364,11 +364,11 @@ class SlamLatticePlannerNode(Node):
         for x, y in zip(xm, ym):
             r, c = xy_2_rc(float(x), float(y), orig_x, orig_y, orig_c, orig_s, height, width, resolution)
             if 0 <= r < height and 0 <= c < width:
-                if dt[r, c] > 0.25:
+                if dt[r, c] > 0.22:
                     obs_x.append(float(x))
                     obs_y.append(float(y))
 
-        if len(obs_x) < 4:
+        if len(obs_x) < 6:
             return np.empty((0, 3), dtype=np.float64)
 
         # 5. 유클리디안 거리 기반 군집화 (Clustering)
@@ -379,30 +379,35 @@ class SlamLatticePlannerNode(Node):
             if dist < 0.28:
                 curr_cluster.append((obs_x[i], obs_y[i]))
             else:
-                if len(curr_cluster) >= 4:
+                if len(curr_cluster) >= 6:
                     clusters.append(np.array(curr_cluster, dtype=np.float64))
                 curr_cluster = [(obs_x[i], obs_y[i])]
-        if len(curr_cluster) >= 4:
+        if len(curr_cluster) >= 6:
             clusters.append(np.array(curr_cluster, dtype=np.float64))
 
         if not clusters:
             return np.empty((0, 3), dtype=np.float64)
 
-        # 6. 클러스터별 중심점(Centroid) 및 헤딩 추정
+        # 6. 클러스터별 중심점(Centroid) 및 헤딩 추정 + 주행 통로(Corridor) 필터
         detected = []
         for cluster in clusters:
             span = np.max(cluster, axis=0) - np.min(cluster, axis=0)
-            if math.hypot(span[0], span[1]) > 1.2:
-                # 1.2m 초과의 너무 큰 군집은 벽면 오검출일 수 있으므로 제외
+            if math.hypot(span[0], span[1]) > 1.0:
+                # 1.0m 초과의 너무 큰 군집은 벽면 오검출일 수 있으므로 제외
                 continue
 
             cx = float(np.mean(cluster[:, 0]))
             cy = float(np.mean(cluster[:, 1]))
 
-            # 가장 가까운 웨이포인트의 트랙 방향을 장애물 헤딩으로 부여
-            _, _, _, nearest_wp_idx = nearest_point(np.array([cx, cy]), self.planner.waypoints[:, :2])
-            theta = float(self.planner.waypoints[nearest_wp_idx, 3])
+            # 가장 가까운 웨이포인트(주행 중심선)와의 거리 검사 (주행 통로 외곽 필터)
+            _, nearest_dist, _, nearest_wp_idx = nearest_point(np.array([cx, cy]), self.planner.waypoints[:, :2])
+            
+            # 주행 레이스라인 기준 좌우 0.40m 이내에 있는 장애물만 실제 회피 대상으로 인정
+            # (벽면에 붙은 외곽 허위 장애물 원천 차단)
+            if nearest_dist > 0.40:
+                continue
 
+            theta = float(self.planner.waypoints[nearest_wp_idx, 3])
             detected.append([cx, cy, theta])
 
         if not detected:

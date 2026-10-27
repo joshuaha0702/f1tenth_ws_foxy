@@ -28,28 +28,34 @@ Lscale: 4.0
 minP: 0.4
 maxP: 0.7
 Pscale: 8.0
-D: 0.1
+D: 0.02
 interpScale: 10
 
 # 실차 추종 보강 (pure_pursuit.py, opt-in; 생략 시 모두 꺼짐 = 시뮬 수집 당시 동작)
 adaptive_lookahead: true        # 조향각에 따라 lookahead 단축 (코너 탈출 개선)
 adaptive_lookahead_gain: 1.8    # steer_factor = 1 / (1 + gain*|steer|)
-adaptive_lookahead_min: 0.65    # 단축 하한 [m]
-k_heading: 0.25                 # heading error 보정 게인 (코너 탈출 시 조기 복원 방지)
+adaptive_lookahead_min: 0.65    # 단축 하한 [m] (코너 에이펙스 타이트하게 물기 복원)
+k_heading: 0.10                 # heading error 보정 게인 (0.10으로 밸런스 유지 - 조기 복원 방지 및 헌팅 차단)
 
 wpt_xind: 0
 wpt_yind: 1
 wpt_vind: 2
 
-# === Ego vehicle (실차 안정성 강화) ===
+# === Ego vehicle (실차 안정성 및 좁은 트랙 회피 최적화) ===
 car1:
-  lh_grid_lb: -0.3
-  lh_grid_ub: 0.5
+  lh_grid_lb: -0.6
+  lh_grid_ub: 0.6
   traj_points: 12
   traj_v_scale: 1.0
-  traj_v_span_min: 0.1
+  traj_v_span_min: 0.7
   traj_v_span_max: 1.0
-  traj_v_span_num: 19
+  traj_v_span_num: 7
+
+  # 좁은 트랙(1.2~1.5m) 횡방향 샘플링 설정 (10cm 간격)
+  sampling_width_max: 0.6
+  sampling_width_num: 13
+  collision_thres: 0.26
+  curve_v_penalty_gain: 2.2
 
   spawn:
     x: 6.4
@@ -59,9 +65,9 @@ car1:
   # [Follow, Map Collision, Curvature Penalty, Opponent]
   cost_weights:
     - 0.4
-    - 0.5
-    - 0.05
-    - 5.0
+    - 1.5
+    - 0.2
+    - 35.0
   minL: 0.8
   maxL: 2.0
   Lscale: 4.0
@@ -105,8 +111,10 @@ car2:
 
 lh_grid_lb: -0.6
 lh_grid_ub: 0.6
+collision_thres: 0.26
+curve_v_penalty_gain: 2.2
 
-# [수정] 전방 주시 거리(Lookahead)를 1.0m -> 1.6m로 확장
-# 실차 서보/VESC 반응 지연을 커버하여 직선 주행 시 뱀처럼 흔들리는 현상 제거
-lookahead_distance: 1.6
+# [수정] 전방 주시 거리(Lookahead)를 1.2m로 조정
+# 회피 궤적 추종 반응성을 확보하면서도 진동/흔들림 방지
+lookahead_distance: 1.2
 wheelbase: 0.325

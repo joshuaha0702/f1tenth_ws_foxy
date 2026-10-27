@@ -340,11 +340,11 @@ class LatticePlannerNode(Node):
         for x, y in zip(xm, ym):
             r, c = xy_2_rc(float(x), float(y), orig_x, orig_y, orig_c, orig_s, height, width, resolution)
             if 0 <= r < height and 0 <= c < width:
-                if dt[r, c] > 0.25:
+                if dt[r, c] > 0.22:
                     obs_x.append(float(x))
                     obs_y.append(float(y))
 
-        if len(obs_x) < 4:
+        if len(obs_x) < 6:
             return np.empty((0, 3), dtype=np.float64)
 
         clusters = []
@@ -354,10 +354,10 @@ class LatticePlannerNode(Node):
             if dist < 0.28:
                 curr_cluster.append((obs_x[i], obs_y[i]))
             else:
-                if len(curr_cluster) >= 4:
+                if len(curr_cluster) >= 6:
                     clusters.append(np.array(curr_cluster, dtype=np.float64))
                 curr_cluster = [(obs_x[i], obs_y[i])]
-        if len(curr_cluster) >= 4:
+        if len(curr_cluster) >= 6:
             clusters.append(np.array(curr_cluster, dtype=np.float64))
 
         if not clusters:
@@ -366,13 +366,16 @@ class LatticePlannerNode(Node):
         detected = []
         for cluster in clusters:
             span = np.max(cluster, axis=0) - np.min(cluster, axis=0)
-            if math.hypot(span[0], span[1]) > 1.2:
+            if math.hypot(span[0], span[1]) > 1.0:
                 continue
 
             cx = float(np.mean(cluster[:, 0]))
             cy = float(np.mean(cluster[:, 1]))
 
-            _, _, _, nearest_wp_idx = nearest_point(np.array([cx, cy]), self.planner.waypoints[:, :2])
+            _, nearest_dist, _, nearest_wp_idx = nearest_point(np.array([cx, cy]), self.planner.waypoints[:, :2])
+            if nearest_dist > 0.40:
+                continue
+
             theta = float(self.planner.waypoints[nearest_wp_idx, 3])
             detected.append([cx, cy, theta])
 

@@ -201,7 +201,7 @@ def generate_launch_description():
     )
 
     # 5. SLAM Lattice Planner Node (주행 플래너 - planned_trajectory 발행)
-    # [수정] max_steering_angle을 0.4189에서 0.26으로 낮추어 VESC 서보 클리핑 발생 차단
+    # [물리 한계] max_steering_angle을 0.26 rad(14.9°)로 고정 (서보 클리핑 및 프레임 간섭 방지)
     lattice_planner_node = Node(
         package='f1tenth_lattice_ros2',
         executable='slam_planner_node',

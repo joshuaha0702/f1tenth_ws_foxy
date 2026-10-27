@@ -39,8 +39,13 @@ class LatticePlanner:
             (raw[:, 1], raw[:, 2], raw[:, 5], raw[:, 3], raw[:, 0])
         ).T
 
-        self.traj_num = 55
         self.lh_grid_rows = 5
+        self.sampling_width_max = getattr(conf, 'sampling_width_max', 0.6)
+        self.sampling_width_num = getattr(conf, 'sampling_width_num', 13)
+        self.sampling_widths = np.linspace(
+            -self.sampling_width_max, self.sampling_width_max, num=self.sampling_width_num
+        )
+        self.traj_num = self.lh_grid_rows * len(self.sampling_widths)
         self.lh_grid_lb = conf.lh_grid_lb
         self.lh_grid_ub = conf.lh_grid_ub
         self.traj_points = conf.traj_points
@@ -126,7 +131,8 @@ class LatticePlanner:
         self.scan_num = conf.scan_num
         self.angle_span = np.linspace(-0.75 * np.pi, 0.75 * np.pi, self.scan_num)
         self.ittc_thres = conf.ittc_thres
-        self.collision_thres = 0.35
+        self.collision_thres = getattr(conf, 'collision_thres', 0.26)
+        self.curve_v_penalty_gain = getattr(conf, 'curve_v_penalty_gain', 2.2)
 
         # === 선두 차량 추종(following) 모드 설정 ===
         follow_cfg = getattr(conf, 'follow', None)
@@ -201,7 +207,7 @@ class LatticePlanner:
             min_L + self.lh_grid_lb, min_L + self.lh_grid_ub, self.lh_grid_rows
         )
         self.goal_grid = sample_lookahead_square(
-            pose_x, pose_y, pose_theta, velocity, waypoints, lh_grid
+            pose_x, pose_y, pose_theta, velocity, waypoints, lh_grid, self.sampling_widths
         )
 
         _t_clothoid0 = time.perf_counter()
@@ -334,9 +340,10 @@ class LatticePlanner:
         traj_v_lattice = (
             np.repeat(all_traj_v, k).reshape(n, k) * self.v_lattice_span * self.traj_v_scale
         )
+        # 곡률에 따른 자동 감속 가중치 적용 (코너 벽 밀림 방지)
         abs_v_cost = (
             -cost_weights[-3] * np.log(1 + traj_v_lattice)
-            + cost_weights[-2] * (mean_k_lattice - all_traj_min_mean_k) * traj_v_lattice
+            + cost_weights[-2] * self.curve_v_penalty_gain * (mean_k_lattice - all_traj_min_mean_k) * traj_v_lattice
         )
 
         # opp_vels 준비: 외부에서 안정적으로 추정된 속도가 있으면 사용, 없으면 폴백 계산
@@ -404,8 +411,14 @@ def traj_global2local(ego_pose, traj):
 def get_follow_optim_cost(traj, traj_clothoid, opp_poses=None, ego_pose=None,
                            prev_traj=None, dt=None, map_metainfo=None):
     n = traj.shape[0]
-    center = np.array((5, 16, 27, 38, 49))
-    center = np.repeat(center, 11)
+    n_widths = 11
+    if n % 5 == 0:
+        n_widths = n // 5
+    mid = n_widths // 2
+    centers = np.empty(5, dtype=np.int64)
+    for r in range(5):
+        centers[r] = r * n_widths + mid
+    center = np.repeat(centers, n_widths)
     traj_idx = np.arange(0, n, 1)
     idx_diff = traj_idx - center
     cost = idx_diff * idx_diff
@@ -423,8 +436,9 @@ def get_curvature(traj, traj_clothoid, wheelbase=0.325):
     max_steer = np.max(np.abs(traj_steer), axis=1)
     mean_k = np.mean(traj_k_abs, axis=1)
     for i in range(len(mean_k)):
-        if max_steer[i] > 0.32:
-            mean_k[i] *= 2.0
+        # 실제 차량 물리 조향 한계(0.26 rad = 14.9°) 이전인 0.25 rad 초과 시 강한 페널티로 클리핑/언더스티어 차단
+        if max_steer[i] > 0.25:
+            mean_k[i] *= 5.0
     max_k = np.max(traj_k_abs, axis=1)
     return mean_k, max_k
 
