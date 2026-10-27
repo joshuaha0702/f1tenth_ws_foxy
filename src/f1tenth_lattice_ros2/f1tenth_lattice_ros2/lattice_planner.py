@@ -250,7 +250,12 @@ class LatticePlanner:
         best_collision = collision_cost[row_idx, col_idx]
 
         # === 추월 불가(좁은 길, 벽 충돌 또는 장애물 차단으로 안전 회피 궤적 부재) 시 서행 추종 폴백 ===
-        if opp_poses.shape[0] > 0 and (best_collision > 300.0 or best_cost > 600.0):
+        # 벽 충돌 없는(traj_cost < 2500) 궤적 중 하드 장애물 충돌(collision_cost < 600)이 아닌 안전한 궤적이 존재하는지 확인
+        safe_trajs = (traj_cost[:, col_idx] < 2500.0) & (collision_cost[:, col_idx] < 600.0)
+        has_safe_traj = np.any(safe_trajs)
+
+        # 안전한 회피 궤적이 아예 없고 전방에 장애물이 있는 경우에만 서행 추종 폴백!
+        if opp_poses.shape[0] > 0 and not has_safe_traj:
             dyn_follow_traj = self._build_dynamic_follow_traj(ego_pose, opp_poses, waypoints)
             if dyn_follow_traj is not None:
                 self.best_traj = dyn_follow_traj
@@ -258,7 +263,7 @@ class LatticePlanner:
                 self.prev_traj_local = traj_global2local(ego_pose, self.best_traj[:, :2])
                 self.prev_opp_pose = opp_poses[:, :2]
                 logger.info(
-                    f'[follow] Overtake blocked (best_cost={best_cost:.1f}, coll={best_collision:.1f}). '
+                    f'[follow] All paths blocked (no safe clear traj, best_cost={best_cost:.1f}). '
                     f'Following leader at safe distance (v={self.best_traj_ref_v:.2f} m/s)'
                 )
                 return self.best_traj, best_cost, traj_cost[row_idx, col_idx], abs_v_cost[row_idx, col_idx], collision_cost[row_idx, col_idx]
@@ -533,13 +538,17 @@ def get_obstacle_collision_with_v(traj, traj_clothoid, v_lattice, opp_poses,
     max_cost = 25.0
     min_cost = 12.0
     width, length = 0.31, 0.58
-    safety_width_distance = 0.20
-    safety_length_distance = 0.80
+    # 좁은 트랙(1.2m~1.5m)에서 회피가 가능하도록 현실적인 크기 적용:
+    ego_col_length = 0.60
+    ego_col_width = 0.34
+    opp_col_length = 0.72
+    opp_col_width = 0.38
+    # 두 차량 반폭 합: 0.17 + 0.19 = 0.36m (36cm 이상 횡방향 이격 시 통과 가능)
 
     # 소프트 사전 회피(Lookahead Repulsive) 영역 파라미터
     soft_lookahead_dist = 2.0
-    soft_front_margin = 0.5
-    soft_lat_width = 0.42
+    soft_front_margin = 0.3
+    soft_lat_width = 0.28  # 중심선 좌우 28cm (30cm 이상 피하면 소프트 비용 0.0)
 
     traj_xyt = np.empty((traj.shape[0], traj.shape[1], 3), dtype=traj.dtype)
     traj_xyt[:, :, 0] = traj[:, :, 0]
@@ -553,8 +562,6 @@ def get_obstacle_collision_with_v(traj, traj_clothoid, v_lattice, opp_poses,
             traj_arc_lengths[i, j] = arc_len * j / max(m - 1, 1)
 
     cost = np.zeros((n, k))
-    col_length = length + safety_length_distance
-    col_width = width + safety_width_distance
 
     for i in range(n):
         tr = traj_xyt[i]
@@ -568,7 +575,7 @@ def get_obstacle_collision_with_v(traj, traj_clothoid, v_lattice, opp_poses,
                 if t_reach > max_pred_time:
                     t_reach = max_pred_time
                 ego_point = tr[j]
-                ego_box = get_vertices(ego_point, col_length, col_width)
+                ego_box = get_vertices(ego_point, ego_col_length, ego_col_width)
                 for oi in range(opp_poses.shape[0]):
                     predicted_opp = np.empty(3)
                     predicted_opp[0] = opp_poses[oi, 0] + opp_vels[oi, 0] * t_reach
@@ -579,27 +586,27 @@ def get_obstacle_collision_with_v(traj, traj_clothoid, v_lattice, opp_poses,
                     else:
                         predicted_opp[2] = opp_poses[oi, 2]
 
-                    # 1. 소프트 사전 회피 비용 (장애물 2.0m 전방에서 미리 스무스한 회피 유도)
-                    dx = ego_point[0] - predicted_opp[0]
-                    dy = ego_point[1] - predicted_opp[1]
-                    cos_ot = math.cos(predicted_opp[2])
-                    sin_ot = math.sin(predicted_opp[2])
-                    d_long = cos_ot * dx + sin_ot * dy
-                    d_lat = -sin_ot * dx + cos_ot * dy
-
-                    if -soft_lookahead_dist <= d_long <= soft_front_margin and abs(d_lat) < soft_lat_width:
-                        lat_factor = 1.0 - (abs(d_lat) / soft_lat_width)
-                        long_ratio = (d_long + soft_lookahead_dist) / (soft_lookahead_dist + soft_front_margin)
-                        long_factor = 0.35 + 0.65 * max(0.0, min(1.0, long_ratio))
-                        soft_cost = 14.0 * lat_factor * long_factor
-                        if soft_cost > max_collision_cost:
-                            max_collision_cost = soft_cost
-
-                    # 2. 하드 충돌 박스 검사 (직접 접촉 위험 영역에 대한 강력한 페널티)
-                    opp_box = get_vertices(predicted_opp, col_length, col_width)
+                    # 1. 하드 충돌 박스 검사 (직접 접촉 위험 영역에 대한 강력한 페널티)
+                    opp_box = get_vertices(predicted_opp, opp_col_length, opp_col_width)
                     if collision(opp_box, ego_box):
                         point_cost = max_cost - j * (max_cost - min_cost) / m
                         if point_cost > max_collision_cost:
                             max_collision_cost = point_cost
+                    else:
+                        # 2. 소프트 사전 회피 비용 (장애물 2.0m 전방에서 정면 직진 궤적에 페널티 -> 2m 전부터 스무스한 회피 유도)
+                        dx = ego_point[0] - predicted_opp[0]
+                        dy = ego_point[1] - predicted_opp[1]
+                        cos_ot = math.cos(predicted_opp[2])
+                        sin_ot = math.sin(predicted_opp[2])
+                        d_long = cos_ot * dx + sin_ot * dy
+                        d_lat = -sin_ot * dx + cos_ot * dy
+
+                        if -soft_lookahead_dist <= d_long <= soft_front_margin and abs(d_lat) < soft_lat_width:
+                            lat_factor = 1.0 - (abs(d_lat) / soft_lat_width)
+                            long_ratio = (d_long + soft_lookahead_dist) / (soft_lookahead_dist + soft_front_margin)
+                            long_factor = 0.35 + 0.65 * max(0.0, min(1.0, long_ratio))
+                            soft_cost = 8.0 * lat_factor * long_factor
+                            if soft_cost > max_collision_cost:
+                                max_collision_cost = soft_cost
             cost[i, ki] = max_collision_cost
     return cost
