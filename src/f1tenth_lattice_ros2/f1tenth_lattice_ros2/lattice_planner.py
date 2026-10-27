@@ -160,6 +160,12 @@ class LatticePlanner:
                     f'desired_gap={self.follow_desired_gap}m, max_speed={self.follow_max_speed}m/s'
                 )
 
+        # 동적 추종 모드 히스테리시스 상태 변수
+        self.follow_blocked_count = 0
+        self.follow_clear_count = 0
+        self.is_following_mode = False
+        self.prev_chosen_width_idx = len(self.sampling_widths) // 2
+
         # Multi-core process pool for parallel Clothoid generation
         self.num_workers = min(multiprocessing.cpu_count(), 4)
         self.pool = multiprocessing.Pool(processes=self.num_workers)
@@ -240,11 +246,18 @@ class LatticePlanner:
             self.last_timing = (clothoid_ms, eval_ms)
         else:
             self.last_timing = None
-        self.all_costs = traj_cost + abs_v_cost + collision_cost
+        # 횡방향 궤적 연속성 보강 (이전 프레임 선택 궤적과의 급격한 점프 방지 -> 요잉 헌팅 억제)
+        n_widths = len(self.sampling_widths)
+        traj_width_indices = np.arange(self.traj_num) % n_widths
+        continuity_cost = 0.25 * (traj_width_indices - self.prev_chosen_width_idx) ** 2
+        continuity_cost_lattice = np.repeat(continuity_cost, self.v_lattice_num).reshape(self.traj_num, self.v_lattice_num)
+
+        self.all_costs = traj_cost + abs_v_cost + collision_cost + continuity_cost_lattice
 
         best_traj_idx = np.argmin(self.all_costs)
         self.best_traj_idx = best_traj_idx
         row_idx, col_idx = divmod(best_traj_idx, self.v_lattice_num)
+        self.prev_chosen_width_idx = row_idx % n_widths
 
         best_cost = self.all_costs[row_idx, col_idx]
         best_collision = collision_cost[row_idx, col_idx]
@@ -254,8 +267,20 @@ class LatticePlanner:
         safe_trajs = (traj_cost[:, col_idx] < 2500.0) & (collision_cost[:, col_idx] < 600.0)
         has_safe_traj = np.any(safe_trajs)
 
-        # 안전한 회피 궤적이 아예 없고 전방에 장애물이 있는 경우에만 서행 추종 폴백!
+        # 히스테리시스: 2프레임 연속 차단 시 추종 진입, 2프레임 연속 클리어 시 추월 복귀 (모드 떨림 원천 차단)
         if opp_poses.shape[0] > 0 and not has_safe_traj:
+            self.follow_blocked_count += 1
+            self.follow_clear_count = 0
+        else:
+            self.follow_clear_count += 1
+            self.follow_blocked_count = 0
+
+        if not self.is_following_mode and self.follow_blocked_count >= 2:
+            self.is_following_mode = True
+        elif self.is_following_mode and self.follow_clear_count >= 2:
+            self.is_following_mode = False
+
+        if self.is_following_mode and opp_poses.shape[0] > 0:
             dyn_follow_traj = self._build_dynamic_follow_traj(ego_pose, opp_poses, waypoints)
             if dyn_follow_traj is not None:
                 self.best_traj = dyn_follow_traj
@@ -263,7 +288,7 @@ class LatticePlanner:
                 self.prev_traj_local = traj_global2local(ego_pose, self.best_traj[:, :2])
                 self.prev_opp_pose = opp_poses[:, :2]
                 logger.info(
-                    f'[follow] All paths blocked (no safe clear traj, best_cost={best_cost:.1f}). '
+                    f'[follow] Paths blocked (hysteresis active, best_cost={best_cost:.1f}). '
                     f'Following leader at safe distance (v={self.best_traj_ref_v:.2f} m/s)'
                 )
                 return self.best_traj, best_cost, traj_cost[row_idx, col_idx], abs_v_cost[row_idx, col_idx], collision_cost[row_idx, col_idx]
