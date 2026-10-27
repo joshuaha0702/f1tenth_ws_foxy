@@ -323,11 +323,11 @@ class SlamLatticePlannerNode(Node):
 
         angles = msg.angle_min + np.arange(n, dtype=np.float32) * msg.angle_increment
 
-        # 1. 거리 및 각도 필터링: 전방 [-1.9 rad, +1.9 rad], 유효 거리 [0.35m, 3.5m]
+        # 1. 거리 및 각도 필터링: 전방 [-1.9 rad, +1.9 rad], 유효 거리 [0.35m, 5.0m] (원거리 조기 회피)
         valid_mask = (
             np.isfinite(ranges) &
             (ranges >= max(float(msg.range_min), 0.35)) &
-            (ranges <= min(float(msg.range_max), 3.5)) &
+            (ranges <= min(float(msg.range_max), 5.0)) &
             (np.abs(angles) <= 1.9)
         )
         if not np.any(valid_mask):

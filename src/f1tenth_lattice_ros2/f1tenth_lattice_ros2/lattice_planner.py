@@ -139,18 +139,23 @@ class LatticePlanner:
         self.follow_enabled = False
         self.follow_zones = []
         self.follow_active = False  # 히스테리시스 상태(진입/해제 떨림 방지)
+        self.follow_lateral_align = 3.0
+        self.follow_desired_gap = 1.2
+        self.follow_kp_gap = 0.8
+        self.follow_max_speed = 1.0
+        self.follow_horizon = 3.0
         if isinstance(follow_cfg, dict):
             zones = follow_cfg.get('zones') or []
             self.follow_zones = [(int(z['min']), int(z['max'])) for z in zones]
+            self.follow_lateral_align = float(follow_cfg.get('lateral_align_m', self.follow_lateral_align))
+            self.follow_desired_gap = float(follow_cfg.get('desired_gap_m', self.follow_desired_gap))
+            self.follow_kp_gap = float(follow_cfg.get('kp_gap', self.follow_kp_gap))
+            self.follow_max_speed = float(follow_cfg.get('max_follow_speed', self.follow_max_speed))
+            self.follow_horizon = float(follow_cfg.get('horizon_m', self.follow_horizon))
             if self.follow_zones:
                 self.follow_enabled = True
-                self.follow_lateral_align = float(follow_cfg.get('lateral_align_m', 2.0))
-                self.follow_desired_gap = float(follow_cfg.get('desired_gap_m', 1.5))
-                self.follow_kp_gap = float(follow_cfg.get('kp_gap', 0.8))
-                self.follow_max_speed = float(follow_cfg.get('max_follow_speed', 1.5))
-                self.follow_horizon = float(follow_cfg.get('horizon_m', 3.0))
                 logger.info(
-                    f'[follow] enabled — zones={self.follow_zones}, '
+                    f'[follow] zone-based enabled — zones={self.follow_zones}, '
                     f'lateral_align={self.follow_lateral_align}m, '
                     f'desired_gap={self.follow_desired_gap}m, max_speed={self.follow_max_speed}m/s'
                 )
@@ -241,12 +246,28 @@ class LatticePlanner:
         self.best_traj_idx = best_traj_idx
         row_idx, col_idx = divmod(best_traj_idx, self.v_lattice_num)
 
+        best_cost = self.all_costs[row_idx, col_idx]
+        best_collision = collision_cost[row_idx, col_idx]
+
+        # === 추월 불가(좁은 길, 벽 충돌 또는 장애물 차단으로 안전 회피 궤적 부재) 시 서행 추종 폴백 ===
+        if opp_poses.shape[0] > 0 and (best_collision > 300.0 or best_cost > 600.0):
+            dyn_follow_traj = self._build_dynamic_follow_traj(ego_pose, opp_poses, waypoints)
+            if dyn_follow_traj is not None:
+                self.best_traj = dyn_follow_traj
+                self.best_traj_ref_v = float(dyn_follow_traj[0, 2])
+                self.prev_traj_local = traj_global2local(ego_pose, self.best_traj[:, :2])
+                self.prev_opp_pose = opp_poses[:, :2]
+                logger.info(
+                    f'[follow] Overtake blocked (best_cost={best_cost:.1f}, coll={best_collision:.1f}). '
+                    f'Following leader at safe distance (v={self.best_traj_ref_v:.2f} m/s)'
+                )
+                return self.best_traj, best_cost, traj_cost[row_idx, col_idx], abs_v_cost[row_idx, col_idx], collision_cost[row_idx, col_idx]
+
         self.best_traj = all_traj[row_idx].copy()
         self.best_traj_ref_v = self.best_traj[-1, 2]
         self.best_traj[:, 2] *= (self.v_lattice_span[col_idx] * self.traj_v_scale)
         self.prev_traj_local = traj_global2local(ego_pose, self.best_traj[:, :2])
         self.prev_opp_pose = opp_poses[:, :2] if opp_poses.shape[0] > 0 else np.zeros((1, 2))
-        best_cost = self.all_costs[row_idx, col_idx]
         return self.best_traj, best_cost, traj_cost[row_idx, col_idx], abs_v_cost[row_idx, col_idx], collision_cost[row_idx, col_idx]
 
     def _in_follow_zone(self, idx):
@@ -254,6 +275,40 @@ class LatticePlanner:
             if lo <= idx <= hi:
                 return True
         return False
+
+    def _build_dynamic_follow_traj(self, ego_pose, opp_poses, waypoints):
+        """추월이 불가능할 때 전방 장애물/차량 뒤에서 안전거리를 유지하며 서행 추종하는 궤적 생성"""
+        if opp_poses.shape[0] == 0:
+            return None
+        ego_i = self.state_i
+        opp_xy = opp_poses[0, :2]
+        _, _, _, opp_i = nearest_point(opp_xy, waypoints[:, 0:2])
+
+        s_ego = waypoints[ego_i, 4]
+        s_opp = waypoints[opp_i, 4]
+        gap = s_opp - s_ego
+        if gap < 0.0:
+            gap += self.s_max
+
+        # 전방 0.2m ~ 3.5m 범위에 있는 전방 장애물에 대해서만 유효
+        if not (0.2 < gap < 3.5):
+            return None
+
+        v_leader = 0.0
+        if (self.prev_opp_pose.shape[0] == opp_poses.shape[0]
+                and np.sum(np.abs(self.prev_opp_pose)) > 1e-6 and self.opp_dt > 1e-6):
+            v_leader = float(np.linalg.norm(opp_xy - self.prev_opp_pose[0]) / self.opp_dt)
+
+        raceline_v_ego = float(waypoints[ego_i, 2])
+        if gap < 0.65:
+            # 안전거리 미만으로 너무 가까우면 정지하여 추돌 방지
+            v_cmd = 0.0
+        else:
+            # 목표 거리(follow_desired_gap)를 유지하며 선두차 속도에 맞춰 추종
+            v_cmd = v_leader + self.follow_kp_gap * (gap - self.follow_desired_gap)
+            v_cmd = max(0.4, min(v_cmd, raceline_v_ego, self.follow_max_speed))
+
+        return self._build_follow_traj(ego_i, v_cmd)
 
     def _maybe_follow(self, ego_pose, opp_poses, waypoints):
         if not self.follow_enabled or opp_poses.shape[0] == 0:
@@ -475,11 +530,16 @@ def get_obstacle_collision_with_v(traj, traj_clothoid, v_lattice, opp_poses,
     if opp_poses.shape[0] == 0:
         return np.zeros((n, k))
 
-    max_cost = 20.0
-    min_cost = 10.0
+    max_cost = 25.0
+    min_cost = 12.0
     width, length = 0.31, 0.58
-    safety_width_distance = 0.15
-    safety_length_distance = 0.2
+    safety_width_distance = 0.20
+    safety_length_distance = 0.80
+
+    # 소프트 사전 회피(Lookahead Repulsive) 영역 파라미터
+    soft_lookahead_dist = 2.0
+    soft_front_margin = 0.5
+    soft_lat_width = 0.42
 
     traj_xyt = np.empty((traj.shape[0], traj.shape[1], 3), dtype=traj.dtype)
     traj_xyt[:, :, 0] = traj[:, :, 0]
@@ -518,6 +578,24 @@ def get_obstacle_collision_with_v(traj, traj_clothoid, v_lattice, opp_poses,
                         predicted_opp[2] = math.atan2(opp_vels[oi, 1], opp_vels[oi, 0])
                     else:
                         predicted_opp[2] = opp_poses[oi, 2]
+
+                    # 1. 소프트 사전 회피 비용 (장애물 2.0m 전방에서 미리 스무스한 회피 유도)
+                    dx = ego_point[0] - predicted_opp[0]
+                    dy = ego_point[1] - predicted_opp[1]
+                    cos_ot = math.cos(predicted_opp[2])
+                    sin_ot = math.sin(predicted_opp[2])
+                    d_long = cos_ot * dx + sin_ot * dy
+                    d_lat = -sin_ot * dx + cos_ot * dy
+
+                    if -soft_lookahead_dist <= d_long <= soft_front_margin and abs(d_lat) < soft_lat_width:
+                        lat_factor = 1.0 - (abs(d_lat) / soft_lat_width)
+                        long_ratio = (d_long + soft_lookahead_dist) / (soft_lookahead_dist + soft_front_margin)
+                        long_factor = 0.35 + 0.65 * max(0.0, min(1.0, long_ratio))
+                        soft_cost = 14.0 * lat_factor * long_factor
+                        if soft_cost > max_collision_cost:
+                            max_collision_cost = soft_cost
+
+                    # 2. 하드 충돌 박스 검사 (직접 접촉 위험 영역에 대한 강력한 페널티)
                     opp_box = get_vertices(predicted_opp, col_length, col_width)
                     if collision(opp_box, ego_box):
                         point_cost = max_cost - j * (max_cost - min_cost) / m

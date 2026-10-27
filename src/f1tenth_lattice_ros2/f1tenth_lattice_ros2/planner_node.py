@@ -308,7 +308,7 @@ class LatticePlannerNode(Node):
         valid_mask = (
             np.isfinite(ranges) &
             (ranges >= max(float(msg.range_min), 0.35)) &
-            (ranges <= min(float(msg.range_max), 3.5)) &
+            (ranges <= min(float(msg.range_max), 5.0)) &
             (np.abs(angles) <= 1.9)
         )
         if not np.any(valid_mask):

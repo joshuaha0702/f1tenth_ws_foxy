@@ -74,13 +74,13 @@ car1:
   minP: 0.4
   maxP: 0.7
 
-  # === 선두 차량 추종(following) 모드 (장애물 회피를 위해 기본 비활성화) ===
+  # === 선두 차량 추종(following) 모드 ===
   follow:
     zones: []
     lateral_align_m: 3.0
-    desired_gap_m: 1.5
+    desired_gap_m: 1.2        # 안전 유지 거리 [m]
     kp_gap: 0.8
-    max_follow_speed: 2.0     # 실차 테스트 시 서행 유도
+    max_follow_speed: 1.0     # 추월 불가 시 안전 서행 속도 [m/s]
     horizon_m: 3.0
 
 
