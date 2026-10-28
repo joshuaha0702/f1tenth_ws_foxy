@@ -5,6 +5,7 @@ from launch.actions import DeclareLaunchArgument, ExecuteProcess
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -19,16 +20,22 @@ def generate_launch_description():
         'namespace', default_value='car1',
         description='로봇 네임스페이스 (agent_node의 robot_name으로 주입되어 토픽 경로 결정)'
     )
+    # 기본 모델: 커밋된 최신 ego 모델. (이전 기본값 models/end2race.pth 는 2026-08-11 의 50 Hz 시절 모델이라
+    # 100 Hz 타이머 노드와 짝이 맞지 않고, config 의 ego_20261012 를 launch 가 덮어써 버리는 문제가 있었다.)
     model_path_arg = DeclareLaunchArgument(
         'model_path',
-        default_value=os.path.join(end2race_pkg, 'models', 'end2race.pth'),
-        description='end2race 모델 가중치(.pth) 경로'
+        default_value=os.path.join(end2race_pkg, 'models', 'ego_20261012.pth'),
+        description='end2race 모델 가중치(.pth) 경로 (기본: 커밋된 최신 ego 모델)'
+    )
+    # 조향 출력 1차 저역통과 시정수 [s]. 0 = 끔. 직선 스윙이 있으면 0.05 부터 시도.
+    steer_lpf_tau_arg = DeclareLaunchArgument(
+        'steer_lpf_tau', default_value='0.0',
+        description='agent_node control.steer_lpf_tau (조향 출력 저역통과, s). 0이면 원본 출력'
     )
     speed_input_arg = DeclareLaunchArgument(
         'speed_input', default_value='command',
-        description='모델 속도 입력: command(직전 출력 명령) 또는 odom(/odom 측정 속도, '
-                    'train.py --speed_input odom으로 학습한 모델) 또는 hybrid([odom, 직전 출력], '
-                    'train.py --speed_input hybrid)'
+        description='모델 속도 입력: command(직전 출력 명령) / odom(/odom 측정 속도) / hybrid([odom, 직전 출력]) / '
+                    'none(LiDAR 전용, train.py --speed_input none 모델). 모델이 학습된 방식과 같아야 함'
     )
     use_rviz_arg = DeclareLaunchArgument(
         'use_rviz', default_value='false',
@@ -60,6 +67,7 @@ def generate_launch_description():
             'model_path': model_path,
             'robot_name': namespace,
             'speed_input': LaunchConfiguration('speed_input'),
+            'control': {'steer_lpf_tau': ParameterValue(LaunchConfiguration('steer_lpf_tau'), value_type=float)},
         }],
         remappings=[
             (['/', namespace, '/scan'], '/scan'),
@@ -105,6 +113,7 @@ def generate_launch_description():
         namespace_arg,
         model_path_arg,
         speed_input_arg,
+        steer_lpf_tau_arg,
         use_rviz_arg,
         record_bag_arg,
         agent_node,

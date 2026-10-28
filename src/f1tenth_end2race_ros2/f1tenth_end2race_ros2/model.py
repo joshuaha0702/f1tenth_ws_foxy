@@ -5,8 +5,21 @@ import numpy as np
 
 def speed_dims_from_state_dict(state_dict) -> int:
     """체크포인트(plain state_dict)의 속도 입력 폭: 'command'/'odom' 모델은 1,
-    train.py --speed_input hybrid ([odom, 직전 명령]) 모델은 2."""
+    train.py --speed_input hybrid ([odom, 직전 명령]) 모델은 2,
+    --speed_input none (LiDAR 전용, speed_mlp 없음) 모델은 0."""
+    if "speed_mlp.0.weight" not in state_dict:
+        return 0
     return int(state_dict["speed_mlp.0.weight"].shape[1])
+
+
+def hidden_scale_from_state_dict(state_dict, processed_features: int = 420) -> int:
+    """체크포인트(plain state_dict)의 GRU hidden 배수.
+    gru.weight_hh_l0 은 (3*H, H), H = processed_features * hidden_scale,
+    processed_features = 360 + 360 // 6 = 420."""
+    hidden = int(state_dict["gru.weight_hh_l0"].shape[1])
+    if hidden % processed_features:
+        raise ValueError(f"GRU hidden 크기 {hidden}가 {processed_features}의 배수가 아닙니다")
+    return hidden // processed_features
 
 
 class End2Race(nn.Module):
@@ -24,11 +37,11 @@ class End2Race(nn.Module):
         k_init = (-1 / 10.0) * torch.log(torch.tensor(0.01) / (2 - torch.tensor(0.01)))
         self.k = nn.Parameter(torch.full((self.num_features,), k_init.item()))
         
-        # 2. Speed 처리용 MLP
-        self.speed_mlp = nn.Sequential(
-            nn.Linear(speed_dims, self.num_features // 6),
-            nn.ReLU()
-        )
+        # 2. Speed 처리용 MLP. speed_dims=0 (train.py --speed_input none) 이면 속도 입력 없이
+        #    모든 스텝에 학습형 dummy_embedding 을 넣는다 (LiDAR 전용: 속도 입력을 복사하는
+        #    지름길을 구조적으로 차단, 속도 상태는 GRU 메모리가 추정).
+        self.speed_mlp = (nn.Sequential(nn.Linear(speed_dims, self.num_features // 6), nn.ReLU())
+                          if speed_dims > 0 else None)
         self.dummy_embedding = nn.Parameter(torch.randn(1, self.num_features // 6))
         
         # 3. GRU 입력 사이즈 계산
@@ -78,10 +91,14 @@ class End2Race(nn.Module):
         processed_lidar = (-1 / (1 + torch.exp(-self.k * x)) + 1) * 2
         
         batch_size, seq_len, _ = x.shape
-        speed_embedding = self.speed_mlp(speed_input)
+        if self.speed_mlp is None:
+            # LiDAR 전용: 속도 입력은 무시(있어도 쓰지 않음)
+            speed_embedding = self.dummy_embedding.expand(batch_size, seq_len, -1)
+        else:
+            speed_embedding = self.speed_mlp(speed_input)
         
         # 훈련 중 마스킹 전략 유지
-        if self.training and self.mask_prob > 0:
+        if self.speed_mlp is not None and self.training and self.mask_prob > 0:
             mask = torch.rand(batch_size, seq_len, 1, device=speed_input.device) < self.mask_prob
             mask_batch = self.dummy_embedding.expand(batch_size, seq_len, -1)
             speed_embedding = torch.where(mask, mask_batch, speed_embedding)
@@ -100,7 +117,7 @@ class End2Race(nn.Module):
         self._infer_device = device
         # 입력 텐서를 미리 할당해 매 스텝 allocation 제거
         self._x_buf = torch.zeros(1, 1, self.num_features, dtype=torch.float32, device=device)
-        self._s_buf = torch.zeros(1, 1, self.speed_dims, dtype=torch.float32, device=device)
+        self._s_buf = torch.zeros(1, 1, max(self.speed_dims, 1), dtype=torch.float32, device=device)
 
     @torch.inference_mode()
     def inference_step(self, lidar_data: np.ndarray, current_speed,
@@ -110,7 +127,9 @@ class End2Race(nn.Module):
         current_speed: float (speed_dims=1) 또는 길이 speed_dims 벡터 (hybrid: [odom, 직전 명령])
         """
         self._x_buf.copy_(torch.as_tensor(lidar_data, dtype=torch.float32).view(1, 1, -1))
-        if np.ndim(current_speed) == 0:
+        if self.speed_dims == 0:
+            pass  # LiDAR 전용 모델: current_speed 무시
+        elif np.ndim(current_speed) == 0:
             if self.speed_dims != 1:
                 raise ValueError(f"speed_dims={self.speed_dims} 모델에는 길이 {self.speed_dims} 속도 벡터가 필요합니다")
             self._s_buf[0, 0, 0] = float(current_speed)

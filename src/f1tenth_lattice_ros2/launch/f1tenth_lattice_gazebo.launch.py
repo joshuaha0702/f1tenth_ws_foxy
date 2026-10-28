@@ -19,6 +19,7 @@ from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def _argv_value(key, default=None):
@@ -117,6 +118,12 @@ def generate_launch_description():
     spawn_y2 = LaunchConfiguration('y2')
     spawn_yaw2 = PythonExpression(['str(float("', LaunchConfiguration('yaw_deg2'), '") * 3.14159265358979 / 180.0)'])
 
+    # Gazebo ackermann plugin velocity P gain (both cars). Default 1.0 = previous URDF value.
+    vel_p_gain_arg = DeclareLaunchArgument(
+        'vel_p_gain', default_value='0.1',
+        description='Gazebo ackermann plugin linear_velocity_pid_gain P term (tools/step_response.py로 실차와 매칭)'
+    )
+
     # Spawn Gazebo + car1
     spawn_car_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -127,6 +134,7 @@ def generate_launch_description():
             'x': spawn_x, 'y': spawn_y, 'yaw': spawn_yaw,
             'gui': gui_value,
             'map': map_name,
+            'vel_p_gain': LaunchConfiguration('vel_p_gain'),
         }.items()
     )
 
@@ -142,6 +150,7 @@ def generate_launch_description():
             'color': 'orange',
             'visualize_lidar': 'false',
             'map': map_name,
+            'vel_p_gain': LaunchConfiguration('vel_p_gain'),
         }.items()
     )
 
@@ -209,12 +218,24 @@ def generate_launch_description():
     # 모델이 학습된 방식과 같아야 한다.
     ego_speed_input_arg = DeclareLaunchArgument(
         'ego_speed_input', default_value='command',
-        description='ego:=end2race 모델의 속도 입력: command, odom 또는 hybrid'
+        description='ego:=end2race 모델의 속도 입력: command, odom, hybrid 또는 none(LiDAR 전용)'
     )
     leader_speed_input_arg = DeclareLaunchArgument(
         'leader_speed_input', default_value='command',
-        description='leader:=end2race 모델의 속도 입력: command, odom 또는 hybrid'
+        description='leader:=end2race 모델의 속도 입력: command, odom, hybrid 또는 none(LiDAR 전용)'
     )
+    # End2Race 조향 출력 1차 저역통과 시정수 [s] (0 = 끔). agent_node control.steer_lpf_tau 로 전달.
+    ego_steer_lpf_tau_arg = DeclareLaunchArgument(
+        'ego_steer_lpf_tau', default_value='0.0',
+        description='ego End2Race 조향 출력 저역통과 시정수(s), 0이면 원본 출력')
+    leader_steer_lpf_tau_arg = DeclareLaunchArgument(
+        'leader_steer_lpf_tau', default_value='0.0',
+        description='leader End2Race 조향 출력 저역통과 시정수(s), 0이면 원본 출력')
+    # 추론 다운샘플 (train.py --decimate N 모델): odom N개마다 1회 추론
+    ego_inference_decimate_arg = DeclareLaunchArgument('ego_inference_decimate', default_value='1',
+        description='ego End2Race 추론 주기 분주 (1 = odom 마다 100 Hz, 10 = 10 Hz)')
+    leader_inference_decimate_arg = DeclareLaunchArgument('leader_inference_decimate', default_value='1',
+        description='leader End2Race 추론 주기 분주')
     ego_is_lattice = PythonExpression(['"', LaunchConfiguration('ego'), '" == "lattice"'])
     ego_is_end2race = PythonExpression(['"', LaunchConfiguration('ego'), '" == "end2race"'])
 
@@ -226,7 +247,7 @@ def generate_launch_description():
     except Exception:
         _end2race_config = None
 
-    def end2race_agent(robot, model, condition, speed_input):
+    def end2race_agent(robot, model, condition, speed_input, steer_lpf_tau, inference_decimate):
         # 학습 데이터와 같게 odom마다(sim time 100 Hz) 추론하고, 속도 배율은 학습 그대로(1.0).
         if _end2race_config is None:
             return []
@@ -241,16 +262,21 @@ def generate_launch_description():
                 'robot_name': robot,
                 'model_path': model,
                 'trigger': 'odom',
+                'inference_decimate': ParameterValue(inference_decimate, value_type=int),
                 'speed_input': speed_input,
-                'control': {'speed_scale': 1.0},
+                'control': {'speed_scale': 1.0,
+                            'steer_lpf_tau': ParameterValue(steer_lpf_tau, value_type=float)},
             }],
         )]
 
     end2race_actions = end2race_agent('car1', LaunchConfiguration('ego_model'), ego_is_end2race,
-                                      LaunchConfiguration('ego_speed_input'))
+                                      LaunchConfiguration('ego_speed_input'),
+                                      LaunchConfiguration('ego_steer_lpf_tau'),
+                                      LaunchConfiguration('ego_inference_decimate'))
     leader_end2race_actions = end2race_agent(
         'car2', LaunchConfiguration('leader_model'), leader_is_end2race,
-        LaunchConfiguration('leader_speed_input'))
+        LaunchConfiguration('leader_speed_input'), LaunchConfiguration('leader_steer_lpf_tau'),
+        LaunchConfiguration('leader_inference_decimate'))
 
     # Lattice planner node — car1
     lattice_node = Node(
@@ -537,7 +563,12 @@ def generate_launch_description():
         leader_arg,
         leader_model_arg,
         ego_speed_input_arg,
+        ego_steer_lpf_tau_arg,
+        leader_steer_lpf_tau_arg,
+        ego_inference_decimate_arg,
+        leader_inference_decimate_arg,
         leader_speed_input_arg,
+        vel_p_gain_arg,
         # gazebo.launch.py also uses ``record``. Preserve the user's data-bag
         # setting under a private key before any included launch executes.
         SetLaunchConfiguration(

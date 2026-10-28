@@ -11,7 +11,7 @@ from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import Odometry
 from std_msgs.msg import String
 from ackermann_msgs.msg import AckermannDriveStamped
-from .model import End2Race, speed_dims_from_state_dict
+from .model import End2Race, speed_dims_from_state_dict, hidden_scale_from_state_dict
 from .scan_preprocess import build_scan_mapping, pool_scan
 
 class End2RaceAgent(Node):
@@ -26,6 +26,9 @@ class End2RaceAgent(Node):
         self.declare_parameter('control.min_steer', -0.52)
         self.declare_parameter('control.max_speed', 4.0)
         self.declare_parameter('control.speed_scale', 1.0)
+        # 조향 출력 1차 저역통과 시정수 [s]. 0 = 끔(원본 출력). 제어 주기는 100 Hz 로 가정.
+        # LiDAR 전용 모델의 직선 조향 지터(2.7 mrad/tick)를 줄이기 위한 에이전트 측 평활.
+        self.declare_parameter('control.steer_lpf_tau', 0.0)
         # 학습 시 라이다 FOV (시뮬레이터 270° = ±2.35619 rad 기준).
         # 360개 feature가 이 각도 범위 전체를 균일하게 덮는다고 가정.
         self.declare_parameter('lidar.fov_min', -2.35619)
@@ -34,9 +37,14 @@ class End2RaceAgent(Node):
         # 'timer': wall clock 100 Hz (실차 기본). 'odom': odom 메시지마다 한 스텝 추론해
         # 학습 데이터와 같은 시뮬레이션 시간 100 Hz로 동작하고 drive stamp = odom stamp.
         self.declare_parameter('trigger', 'timer')
+        # 추론 주기 낮추기 (train.py --decimate N 으로 학습한 모델용). odom 트리거: odom N개마다 1회 추론,
+        # 사이에는 마지막 명령 유지. timer 트리거: 타이머 주기 = timer_rate_hz.
+        self.declare_parameter('inference_decimate', 1)
+        self.declare_parameter('timer_rate_hz', 100.0)
         # 모델의 속도 입력: 'command' = 직전 출력 속도 명령(기존 학습), 'odom' = /<robot>/odom
         # twist.linear.x 측정 속도 (train.py --speed_input odom으로 학습한 모델용),
-        # 'hybrid' = [odom 측정 속도, 직전 출력 속도 명령] 2채널 (train.py --speed_input hybrid).
+        # 'hybrid' = [odom 측정 속도, 직전 출력 속도 명령] 2채널 (train.py --speed_input hybrid),
+        # 'none' = 속도 입력 없음, LiDAR 전용 (train.py --speed_input none).
         self.declare_parameter('speed_input', 'command')
 
         self.robot_name = self.get_parameter('robot_name').value
@@ -46,14 +54,20 @@ class End2RaceAgent(Node):
         self.min_steer = self.get_parameter('control.min_steer').value
         self.max_speed = self.get_parameter('control.max_speed').value
         self.speed_scale = self.get_parameter('control.speed_scale').value
+        self.steer_lpf_tau = float(self.get_parameter('control.steer_lpf_tau').value)
+        self._steer_filt = None   # LPF 상태 (None = 다음 출력으로 초기화)
         self.fov_min = self.get_parameter('lidar.fov_min').value
         self.fov_max = self.get_parameter('lidar.fov_max').value
         self.lidar_max_range = self.get_parameter('lidar.max_range').value
         self.trigger = self.get_parameter('trigger').value
+        self.inference_decimate = max(int(self.get_parameter('inference_decimate').value), 1)
+        self.timer_rate_hz = float(self.get_parameter('timer_rate_hz').value)
+        self._odom_since_infer = 0
+        self._control_dt = (self.inference_decimate / 100.0 if self.trigger == 'odom' else 1.0 / self.timer_rate_hz)
         self.speed_input = self.get_parameter('speed_input').value
-        if self.speed_input not in ('command', 'odom', 'hybrid'):
-            raise RuntimeError(f"[{self.robot_name}] speed_input은 'command', 'odom', 'hybrid' 중 하나여야 "
-                               f"합니다: {self.speed_input}")
+        if self.speed_input not in ('command', 'odom', 'hybrid', 'none'):
+            raise RuntimeError(f"[{self.robot_name}] speed_input은 'command', 'odom', 'hybrid', 'none' 중 "
+                               f"하나여야 합니다: {self.speed_input}")
         self.uses_odom = self.speed_input in ('odom', 'hybrid')
         
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -68,21 +82,29 @@ class End2RaceAgent(Node):
             raise RuntimeError(f"[{self.robot_name}] 모델 파일을 찾을 수 없습니다: {self.model_path}")
         state = torch.load(self.model_path, map_location=self.device)
         speed_dims = speed_dims_from_state_dict(state)
-        expected_dims = 2 if self.speed_input == 'hybrid' else 1
+        expected_dims = {'hybrid': 2, 'none': 0}.get(self.speed_input, 1)
         if speed_dims != expected_dims:
             raise RuntimeError(f"[{self.robot_name}] 모델 속도 입력 폭 {speed_dims}이 speed_input="
                                f"'{self.speed_input}'(폭 {expected_dims})과 맞지 않습니다: {self.model_path}")
+        # GRU 크기(hidden_scale)도 체크포인트의 gru.weight_hh_l0에서 읽는다. 파라미터는 참고용.
+        ckpt_hidden_scale = hidden_scale_from_state_dict(state)
+        if ckpt_hidden_scale != self.hidden_scale:
+            self.get_logger().warn(f"[{self.robot_name}] 체크포인트 hidden_scale={ckpt_hidden_scale}, "
+                                   f"파라미터 {self.hidden_scale} 무시")
+        self.hidden_scale = ckpt_hidden_scale
         self.model = End2Race(hidden_scale=self.hidden_scale, speed_dims=speed_dims).to(self.device)
         self.model.load_state_dict(state)
-        self.get_logger().info(f"[{self.robot_name}] 모델 로드 성공: {self.model_path}, device: {self.device}")
+        self.get_logger().info(f"[{self.robot_name}] 모델 로드 성공: {self.model_path}, device: {self.device}, "
+                               f"hidden_scale={self.hidden_scale}, speed_dims={speed_dims}")
         
         self.model.eval()
         self.model.set_inference_device(self.device)
 
         # 3. GRU Hidden State 초기화 (model.py 내부 구조 참조)
         # processed_features = 360 + 360//6 = 420
-        # hidden_size = 420 * hidden_scale
+        # hidden_size = 420 * hidden_scale (체크포인트에서 추론한 값; None이면 GRU가 0으로 초기화)
         self.hidden_state = None
+        self._steer_filt = None
         self.current_speed = 0.0
         self.measured_speed = 0.0  # speed_input='odom'/'hybrid'일 때 최신 odom twist.linear.x
 
@@ -141,7 +163,7 @@ class End2RaceAgent(Node):
                                          callback_group=cb_group)
             # 100Hz wall clock 기준 (use_sim_time=True여도 실제 시간으로 발화)
             wall_clock = Clock(clock_type=ClockType.STEADY_TIME)
-            self.drive_timer = self.create_timer(1.0 / 100.0, self.drive_callback, clock=wall_clock, callback_group=cb_group)
+            self.drive_timer = self.create_timer(1.0 / self.timer_rate_hz, self.drive_callback, clock=wall_clock, callback_group=cb_group)
 
         # 5. 진단 watchdog — 추론 그룹(step_group)이 막혀도 돌 수 있도록 별도 Reentrant 그룹,
         # use_sim_time과 무관하게 steady clock 5초 주기.
@@ -206,6 +228,7 @@ class End2RaceAgent(Node):
         if command == 'STOP':
             self.publishing_enabled = False
             self.hidden_state = None
+            self._steer_filt = None
             self.current_speed = 0.0
             self.measured_speed = 0.0
             if self.trigger == 'odom':
@@ -217,6 +240,7 @@ class End2RaceAgent(Node):
         elif command == 'START':
             self.stop_pending = False
             self.hidden_state = None
+            self._steer_filt = None
             self.current_speed = 0.0
             self.measured_speed = 0.0
             # 텔레포트 이전의 scan으로 첫 스텝을 추론하지 않도록 새 scan을 기다린다.
@@ -243,6 +267,10 @@ class End2RaceAgent(Node):
             return
         # 이 스텝을 발화시킨 odom의 측정 속도 (학습 CSV odom_speed = drive stamp 시각의 odom과 동일)
         self.measured_speed = float(msg.twist.twist.linear.x)
+        self._odom_since_infer += 1
+        if self._odom_since_infer < self.inference_decimate:
+            return  # 다운샘플 학습 모델: N개 odom 마다 1회 추론, 사이에는 마지막 명령 유지
+        self._odom_since_infer = 0
         self.drive_callback(stamp=msg.header.stamp)
 
     def _odom_speed_callback(self, msg):
@@ -282,6 +310,11 @@ class End2RaceAgent(Node):
                                     f"GPU 경합/정지 의심 (이후 동일 경고는 생략)")
 
         steer_out = float(actions[0])
+        if self.steer_lpf_tau > 0.0:
+            alpha = self._control_dt / (self.steer_lpf_tau + self._control_dt)
+            self._steer_filt = steer_out if self._steer_filt is None else \
+                self._steer_filt + alpha * (steer_out - self._steer_filt)
+            steer_out = self._steer_filt
         speed_out = float(np.clip(actions[1], 0.0, self.max_speed))
         speed_out *= self.speed_scale
         self.current_speed = speed_out

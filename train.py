@@ -85,12 +85,21 @@ def parse_arguments():
                              "sees horizons up to the longest length. Batches hold a single length.")
     parser.add_argument("--hidden_scale", type=int, default=4)
     parser.add_argument("--mask_prob", type=float, default=0.1)
+    parser.add_argument("--decimate", type=int, default=1,
+                        help="Keep every N-th row of each episode (100 Hz -> 100/N Hz) before windowing, like the "
+                             "End2Race paper's 10 Hz downsampling (N=10). Scale --seq_lengths/--sequence_length by 1/N. "
+                             "The agent must then infer at the same rate (agent_node inference_decimate / timer_rate_hz).")
+    parser.add_argument("--mirror_prob", type=float, default=0.0,
+                        help="Mirror augmentation: with this probability per training window flip the "
+                             "360 LiDAR bins left<->right and negate the steering label (speed inputs "
+                             "unchanged). Equivalent to driving the mirrored track, i.e. the opposite "
+                             "direction on a symmetric vehicle; 0.5 balances CW/CCW.")
     parser.add_argument("--disable_lidar_noise", action="store_true",
                         help="Disable distance-dependent Gaussian noise augmentation")
     parser.add_argument("--start_from_rest", action="store_true",
                         help="Also train on each episode's first row with previous speed 0, "
                              "matching inference that starts every episode from rest")
-    parser.add_argument("--speed_input", choices=["command", "odom", "hybrid"], default="command",
+    parser.add_argument("--speed_input", choices=["command", "odom", "hybrid", "none"], default="command",
                         help="'command': speed input = previous speed command (desired_speed of the "
                              "previous row; the agent feeds back its own last output). 'odom': speed "
                              "input = measured speed at the row's time (CSV column odom_speed, same row, "
@@ -177,8 +186,11 @@ class SequenceDataset(Dataset):
                  balance_leader_near: Optional[float] = None, near_gap: float = 3.0,
                  speed_input: str = "command", skip_first_s: float = 0.0,
                  cmd_drop: Optional[float] = None, cmd_noise: Optional[float] = None,
-                 cmd_lag_prob: Optional[float] = None, cmd_lag_s: float = 0.5):
+                 cmd_lag_prob: Optional[float] = None, cmd_lag_s: float = 0.5,
+                 mirror_prob: float = 0.0, decimate: int = 1):
         self.sequence_length = sequence_length
+        self.mirror_prob = mirror_prob
+        self.decimate = max(int(decimate), 1)
         self.seq_lengths = sorted(seq_lengths) if seq_lengths else None
         self.episodes = []
         self.csv_files = csv_files
@@ -221,6 +233,9 @@ class SequenceDataset(Dataset):
         csv_files = self.csv_files if self.csv_files is not None else sorted(glob.glob(os.path.join(data_path, "*.csv")))
         for csv_file in csv_files:
             df = pd.read_csv(csv_file)
+            if self.decimate > 1:
+                # 100 Hz -> 100/N Hz: N행마다 한 행. speed_prev/odom/lidar_delay 는 남은 행 기준으로 아래에서 계산됨
+                df = df.iloc[::self.decimate].reset_index(drop=True)
 
             required_cols = self.lidar_columns + self.action_columns
             if self.use_lidar_delay:
@@ -255,6 +270,7 @@ class SequenceDataset(Dataset):
             meta_path = csv_file + ".meta.npz"
             if self.balance_leader_near is not None and os.path.exists(meta_path):
                 meta = np.load(meta_path)
+                meta = {k: meta[k][::self.decimate] for k in meta.files}
                 if len(meta["gap"]) == len(df):
                     near = (meta["gap"] > 0) & (meta["gap"] < self.near_gap)
                     corner = np.abs(meta["kappa"]) >= 0.25
@@ -377,6 +393,11 @@ class SequenceDataset(Dataset):
         elif self.augment_command:
             speed = self._augment_command_only(speed)
         action = torch.tensor(seq['action'], dtype=torch.float32, device=self.device)
+        if self.mirror_prob > 0 and torch.rand(()) < self.mirror_prob:
+            # 거울 증강: bin i <-> 359-i (FOV 가 대칭이라 각도 반전과 같음), 조향 부호 반전.
+            # 속도 입력/라벨, 행 가중치, lidar_delay 는 그대로.
+            lidar = lidar.flip(-1)
+            action = torch.stack((-action[:, 0], action[:, 1]), dim=1)
         row_weight = self.class_weight[seq['cls']]
         if 'mask' in seq:
             row_weight = row_weight * seq['mask']
@@ -492,7 +513,7 @@ def check_speed_column(df, csv_file: str, speed_input: str):
 
 
 def load_validation_episodes(val_files, device, use_lidar_delay: bool, speed_input: str = "command",
-                             skip_first_s: float = 0.0):
+                             skip_first_s: float = 0.0, decimate: int = 1):
     """Whole episodes as tensors, run from the first row like the agent: previous speed
     command 0 at row 0 ('command'), or the measured speed of each row ('odom'), or both
     ('hybrid': [odom, expert previous command], clean)."""
@@ -500,6 +521,8 @@ def load_validation_episodes(val_files, device, use_lidar_delay: bool, speed_inp
     lidar_cols = [f"lidar_{i}" for i in range(360)]
     for f in val_files:
         df = pd.read_csv(f)
+        if decimate > 1:
+            df = df.iloc[::decimate].reset_index(drop=True)
         check_speed_column(df, f, speed_input)
         action = df[["steer", "desired_speed"]].values.astype(np.float32)
         if speed_input == "odom":
@@ -744,8 +767,15 @@ if __name__ == "__main__":
         cmd_noise=args.cmd_noise,
         cmd_lag_prob=args.cmd_lag_prob,
         cmd_lag_s=args.cmd_lag_s,
+        mirror_prob=args.mirror_prob,
+        decimate=args.decimate,
     )
+    if args.decimate > 1:
+        print(f"Decimation: every {args.decimate}-th row ({100 // args.decimate} Hz); the agent must run at the same rate")
     print(f"Speed input: {args.speed_input}")
+    if args.speed_input == "none":
+        print("LiDAR-only model: no speed input (dummy embedding every step); mask_prob/cmd_* ignored")
+    print(f"Mirror augmentation: {'off' if args.mirror_prob <= 0 else f'p={args.mirror_prob}'}")
     if args.speed_input == "hybrid":
         print(f"Command channel augmentation: drop->odom {dataset.cmd_drop}, noise sigma {dataset.cmd_noise} m/s, "
               f"lag {args.cmd_lag_s} s with prob {dataset.cmd_lag_prob}")
@@ -760,10 +790,10 @@ if __name__ == "__main__":
         print(f"Loss/validation skip the first {args.skip_first_s} s of every episode (rows still fed to the GRU)")
     print(f"LiDAR noise augmentation: {'disabled' if args.disable_lidar_noise else 'enabled'}")
     val_episodes = (load_validation_episodes(val_files, device, use_lidar_delay, args.speed_input,
-                                             args.skip_first_s)
+                                             args.skip_first_s, args.decimate)
                     if val_files else None)
     selffeed_batch = (build_selffeed_batch(val_episodes, args.selffeed_episodes)
-                      if val_episodes and not use_lidar_delay and args.speed_input in ("hybrid", "command")
+                      if val_episodes and not use_lidar_delay and args.speed_input in ("hybrid", "command", "none")
                       else None)
 
     dataloader_kwargs = {'pin_memory': False, 'num_workers': 0} if device.type != "cpu" else {}
@@ -786,7 +816,7 @@ if __name__ == "__main__":
         model = End2RaceWithDelay(mask_prob=args.mask_prob, hidden_scale=args.hidden_scale).to(device)
     else:
         model = End2Race(mask_prob=args.mask_prob, hidden_scale=args.hidden_scale,
-                         speed_dims=2 if args.speed_input == "hybrid" else 1).to(device)
+                         speed_dims={"hybrid": 2, "none": 0}.get(args.speed_input, 1)).to(device)
 
     print(f"Train batches: {len(train_loader)}")
 
@@ -802,6 +832,11 @@ if __name__ == "__main__":
         if not use_lidar_delay and speed_dims_from_state_dict(state) != model.speed_dims:
             raise ValueError(f"{checkpoint_path} has speed input width {speed_dims_from_state_dict(state)}, "
                              f"--speed_input {args.speed_input} needs {model.speed_dims}")
+        ckpt_hidden = int(state["gru.weight_hh_l0"].shape[1])
+        if ckpt_hidden != model.gru.hidden_size:
+            raise ValueError(f"{checkpoint_path} has GRU hidden size {ckpt_hidden} "
+                             f"(hidden_scale {ckpt_hidden / (model.gru.hidden_size / args.hidden_scale):g}), "
+                             f"--hidden_scale {args.hidden_scale} needs {model.gru.hidden_size}")
         model.load_state_dict(state)
 
     criterion = nn.MSELoss()

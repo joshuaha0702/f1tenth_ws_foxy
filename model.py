@@ -4,8 +4,21 @@ from typing import Optional, Tuple
 
 def speed_dims_from_state_dict(state_dict) -> int:
     """Width of the speed input of an End2Race checkpoint (plain state_dict): 1 for the
-    'command'/'odom' models, 2 for train.py --speed_input hybrid ([odom, previous command])."""
+    'command'/'odom' models, 2 for train.py --speed_input hybrid ([odom, previous command]),
+    0 for --speed_input none (LiDAR-only, no speed_mlp)."""
+    if "speed_mlp.0.weight" not in state_dict:
+        return 0
     return int(state_dict["speed_mlp.0.weight"].shape[1])
+
+
+def hidden_scale_from_state_dict(state_dict, processed_features: int = 420) -> int:
+    """GRU hidden-size multiplier of an End2Race checkpoint (plain state_dict).
+    gru.weight_hh_l0 is (3*H, H) with H = processed_features * hidden_scale, where
+    processed_features = 360 + 360 // 6 = 420 for End2Race (480 for End2RaceWithDelay)."""
+    hidden = int(state_dict["gru.weight_hh_l0"].shape[1])
+    if hidden % processed_features:
+        raise ValueError(f"GRU hidden size {hidden} is not a multiple of {processed_features}")
+    return hidden // processed_features
 
 
 class End2Race(nn.Module):
@@ -24,11 +37,11 @@ class End2Race(nn.Module):
         k_init = (-1 / 10.0) * torch.log(torch.tensor(0.01) / (2 - torch.tensor(0.01)))
         self.k = nn.Parameter(torch.full((num_features,), k_init.item()))
         
-        # Speed-specific modules (only created if needed)
-        self.speed_mlp = nn.Sequential(
-            nn.Linear(speed_dims, num_features // 6),
-            nn.ReLU()
-        )
+        # Speed-specific modules. speed_dims == 0 (train.py --speed_input none): LiDAR-only,
+        # the learnable dummy_embedding is fed at every step instead of a speed input, which
+        # removes the "copy the speed input" shortcut; the GRU state has to carry the speed.
+        self.speed_mlp = (nn.Sequential(nn.Linear(speed_dims, num_features // 6), nn.ReLU())
+                          if speed_dims > 0 else None)
         self.dummy_embedding = nn.Parameter(torch.randn(1, num_features // 6))
         
         # Calculate processed feature size
@@ -89,10 +102,13 @@ class End2Race(nn.Module):
         
         # Process speed input
         batch_size, seq_len, _ = x.shape
-        speed_embedding = self.speed_mlp(speed_input)
+        if self.speed_mlp is None:
+            speed_embedding = self.dummy_embedding.expand(batch_size, seq_len, -1)  # LiDAR-only
+        else:
+            speed_embedding = self.speed_mlp(speed_input)
         
         # Apply dummy embedding during training
-        if self.training and self.mask_prob > 0:
+        if self.speed_mlp is not None and self.training and self.mask_prob > 0:
             mask = torch.rand(batch_size, seq_len, 1, device=speed_input.device) < self.mask_prob
             mask_batch = self.dummy_embedding.expand(batch_size, seq_len, -1)
             speed_embedding = torch.where(mask, mask_batch, speed_embedding)
