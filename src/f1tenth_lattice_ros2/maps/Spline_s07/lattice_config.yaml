@@ -73,12 +73,12 @@ car1:
   follow:
     zones:                    # raceline1.csv 행 인덱스 기준 following 활성 구간 목록
       # raceline1의 코너 구간(|kappa| > 0.15, 진입 4행 전 ~ 출구 2행 후)
-      - { min: 0, max: 285 }
+      - { min: 17, max: 279 }
     # car1은 car2보다 항상 빠르게 설정되므로 gap이 단조 감소 -> trigger/release
     # 히스테리시스 없이 단일 거리 임계값으로 판정한다.
     # car2가 car1 앞(트랙 진행방향)으로 lateral_align_m 이내에 있으면 following 진입/유지.
     # lattice 회피 반응거리(~3m)와 car2 스폰 간격(~1~2m)보다 커야 follow가 추월을 선점함.
-    lateral_align_m: 5.0      # car2가 car1 앞 이 거리(m) 이내일 때 following
+    lateral_align_m: 3.0      # car2가 car1 앞 이 거리(m) 이내일 때 following
     desired_gap_m: 1.5        # ACC 목표 차간거리 (차량 길이 0.58m 고려, lateral_align_m 보다 작게)
     kp_gap: 0.8               # 차간거리 오차 -> 속도 보정 게인
     max_follow_speed: 3.0     # following 시 속도 상한 (서행)

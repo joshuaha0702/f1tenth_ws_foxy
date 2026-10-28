@@ -30,7 +30,7 @@ opponent_offset:
 # (lattice_config.yaml의 car1: traj_v_scale, car2: traj_v_scale 을 런타임에 덮어씀)
 traj_v_scale:
   car1: { min: 1.0, max: 1.0 }
-  car2: { min: 0.45, max: 0.7 }
+  car2: { min: 0.3, max: 0.7 }
 
 # 스폰 위치 및 자세 섭동: 중심라인 기준 수직 방향 lateral offset과 heading에 균등 분포 부여.
 # lateral_offset_m: 중심라인 수직 방향 변위 최대값 (m). uniform(-val, +val). 0.0이면 섭동 없음.
