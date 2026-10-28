@@ -50,7 +50,7 @@ def parse_arguments():
                         help='Safety margin from outer wall (m)')
     parser.add_argument('--v_max', type=float, default=3.0,
                         help='Maximum vehicle speed (m/s)')
-    parser.add_argument('--vehicle_width', type=float, default=0.31)
+    parser.add_argument('--vehicle_width', type=float, default=0.22)
     parser.add_argument('--vehicle_mass', type=float, default=3.362)
     parser.add_argument('--drag_coeff', type=float, default=0.0075)
     parser.add_argument('--num_laps', type=int, default=2)

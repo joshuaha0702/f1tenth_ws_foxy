@@ -102,6 +102,13 @@ def generate_launch_description():
     headless = LaunchConfiguration('headless')
     gui_value = PythonExpression(['"false" if "', headless, '".lower() == "true" else "true"'])
 
+    use_lidar_tracker_arg = DeclareLaunchArgument(
+        'use_lidar_tracker',
+        default_value='false',
+        description='상대차 odom 대신 실차와 동일하게 LiDAR 스캔으로 장애물 추적/회피 (true/false)'
+    )
+    use_lidar_tracker = LaunchConfiguration('use_lidar_tracker')
+
     # Spawn coordinates arguments (car1) — defaults from lattice_config.yaml
     x_arg = DeclareLaunchArgument('x', default_value=str(_s1.get('x', 6.4)), description='Car1 Spawn X position')
     y_arg = DeclareLaunchArgument('y', default_value=str(_s1.get('y', 16.0)), description='Car1 Spawn Y position')
@@ -239,6 +246,27 @@ def generate_launch_description():
     ego_is_lattice = PythonExpression(['"', LaunchConfiguration('ego'), '" == "lattice"'])
     ego_is_end2race = PythonExpression(['"', LaunchConfiguration('ego'), '" == "end2race"'])
 
+    use_norm_arg = DeclareLaunchArgument(
+        'use_norm',
+        default_value='auto',
+        description='정규화 모델 사용 여부 (auto / true / false)'
+    )
+    model_rate_hz_arg = DeclareLaunchArgument(
+        'model_rate_hz',
+        default_value='100.0',
+        description='End2Race model inference rate (Hz)'
+    )
+    interp_mode_arg = DeclareLaunchArgument(
+        'interp_mode',
+        default_value='linear',
+        description='End2Race interpolation mode: linear or zoh'
+    )
+    interp_steps_arg = DeclareLaunchArgument(
+        'interp_steps',
+        default_value='4',
+        description='End2Race linear interpolation ramp steps'
+    )
+
     # End2Race 패키지는 모델 평가에만 필요하므로, 설치되지 않은 워크스페이스에서도
     # 데이터 수집 launch가 동작하도록 선택적으로 찾는다.
     try:
@@ -261,9 +289,13 @@ def generate_launch_description():
                 'use_sim_time': True,
                 'robot_name': robot,
                 'model_path': model,
+                'use_norm': LaunchConfiguration('use_norm'),
                 'trigger': 'odom',
                 'inference_decimate': ParameterValue(inference_decimate, value_type=int),
                 'speed_input': speed_input,
+                'model_rate_hz': PythonExpression(["float('", LaunchConfiguration('model_rate_hz'), "')"]),
+                'interp_mode': LaunchConfiguration('interp_mode'),
+                'interp_steps': PythonExpression(["int('", LaunchConfiguration('interp_steps'), "')"]),
                 'control': {'speed_scale': 1.0,
                             'steer_lpf_tau': ParameterValue(steer_lpf_tau, value_type=float)},
             }],
@@ -293,6 +325,7 @@ def generate_launch_description():
             'max_speed': 3.0,
             'max_steering_angle': 0.4189,
             'opponent_namespace': 'car2',
+            'use_lidar_tracker': use_lidar_tracker,
             'use_sim_time': True,
         }]
     )
@@ -545,6 +578,7 @@ def generate_launch_description():
         map_arg,
         head2head_arg,
         headless_arg,
+        use_lidar_tracker_arg,
         config_arg,
         raceline_arg,
         x_arg,
@@ -569,6 +603,10 @@ def generate_launch_description():
         leader_inference_decimate_arg,
         leader_speed_input_arg,
         vel_p_gain_arg,
+        use_norm_arg,
+        model_rate_hz_arg,
+        interp_mode_arg,
+        interp_steps_arg,
         # gazebo.launch.py also uses ``record``. Preserve the user's data-bag
         # setting under a private key before any included launch executes.
         SetLaunchConfiguration(

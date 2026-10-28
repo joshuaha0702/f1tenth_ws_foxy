@@ -7,7 +7,7 @@
 
     # Vehicle Dimensions
     wheelbase: 0.325
-    wheel_separation: 0.2
+    wheel_separation: 0.22
     wheel_radius: 0.05
     
     # Limits

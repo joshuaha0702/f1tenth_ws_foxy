@@ -27,7 +27,7 @@ from rosbags.rosbag2 import Reader
 from analyze_collisions import load_raceline, parse_log, wall_to_sim
 from validate_episodes import make_typestore, stamp_ns
 
-WHEELBASE = 0.3302
+WHEELBASE = 0.325
 CLASSES = ('straight', 'entry', 'curve', 'exit')   # |kappa| < 0.05 / ramping up / >= 0.25 / ramping down
 
 

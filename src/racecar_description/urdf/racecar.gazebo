@@ -36,6 +36,7 @@
     <gazebo reference="right_rear_wheel"><mu1 value="1.0"/><mu2 value="1.0"/><material>Gazebo/Black</material></gazebo>
     <gazebo reference="left_front_wheel"><mu1 value="1.0"/><mu2 value="1.0"/><material>Gazebo/Black</material></gazebo>
     <gazebo reference="right_front_wheel"><mu1 value="1.0"/><mu2 value="1.0"/><material>Gazebo/Black</material></gazebo>
+    <gazebo reference="rear_reflector"><material>Gazebo/Black</material></gazebo>
 
     <!-- Ackermann Drive Plugin -->
     <gazebo>
@@ -54,7 +55,7 @@
         <right_steering_joint>right_steering_hinge_joint</right_steering_joint>
         
         
-        <wheel_separation>0.2</wheel_separation>
+        <wheel_separation>0.22</wheel_separation>
         <wheel_diameter>0.1</wheel_diameter>
         <wheelbase>0.325</wheelbase>
         <!-- NOTE: gazebo_ros_ackermann_drive (Foxy, gazebo_plugins 3.5.3) never reads

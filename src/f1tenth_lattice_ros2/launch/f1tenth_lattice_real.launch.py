@@ -1,11 +1,17 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, RegisterEventHandler, TimerAction
+from launch.actions import (
+    DeclareLaunchArgument,
+    ExecuteProcess,
+    GroupAction,
+    RegisterEventHandler,
+    TimerAction,
+)
 from launch.conditions import IfCondition, UnlessCondition
 from launch.event_handlers import OnProcessStart
 from launch.substitutions import LaunchConfiguration, PythonExpression
-from launch_ros.actions import Node
+from launch_ros.actions import Node, PushRosNamespace
 
 
 def generate_launch_description():
@@ -15,6 +21,16 @@ def generate_launch_description():
     default_amcl_config = os.path.join(lattice_pkg, 'config', 'amcl_config.yaml')
 
     # --- Launch Arguments ---
+    namespace_arg = DeclareLaunchArgument(
+        'namespace',
+        default_value='',
+        description='Robot namespace (e.g. car1, car2). If empty, runs in root / namespace.'
+    )
+    map_arg = DeclareLaunchArgument(
+        'map',
+        default_value='',
+        description='Name of the map folder (alias for map_name, e.g. map_20260929_173637)'
+    )
     map_name_arg = DeclareLaunchArgument(
         'map_name',
         default_value='monza_track',
@@ -50,7 +66,33 @@ def generate_launch_description():
         default_value='scan',
         description='Localization mode (scan, amcl, odom, fusion)'
     )
+    overtake_mode_arg = DeclareLaunchArgument(
+        'overtake_mode',
+        default_value='none',
+        description='Overtake mode: none (disabled, default), odom (opponent odom topic), lidar (real-time LiDAR tracking)'
+    )
+    opponent_ns_arg = DeclareLaunchArgument(
+        'opponent_ns',
+        default_value='car2',
+        description='Opponent robot namespace for odom mode (default: car2)'
+    )
+    opponent_topic_arg = DeclareLaunchArgument(
+        'opponent_topic',
+        default_value='',
+        description='Custom opponent odom topic for odom mode (overrides opponent_ns)'
+    )
+    enable_overtake_arg = DeclareLaunchArgument(
+        'enable_overtake',
+        default_value='false',
+        description='Enable overtaking / obstacle avoidance (legacy, default: false)'
+    )
+    opponent_weight_arg = DeclareLaunchArgument(
+        'opponent_weight',
+        default_value='-1.0',
+        description='Custom opponent avoidance cost weight (-1.0 to use yaml config default)'
+    )
 
+    namespace = LaunchConfiguration('namespace')
     map_name = LaunchConfiguration('map_name')
     config_path = LaunchConfiguration('config')
     amcl_config_path = LaunchConfiguration('amcl_config')
@@ -58,10 +100,25 @@ def generate_launch_description():
     drive_topic = LaunchConfiguration('drive_topic')
     plan_freq = LaunchConfiguration('plan_freq')
     loc_mode = LaunchConfiguration('loc_mode')
+    overtake_mode = LaunchConfiguration('overtake_mode')
+    opponent_ns = LaunchConfiguration('opponent_ns')
+    opponent_topic = LaunchConfiguration('opponent_topic')
+    enable_overtake = LaunchConfiguration('enable_overtake')
+    opponent_weight = LaunchConfiguration('opponent_weight')
+
+    # namespace가 지정되었고 drive_topic이 기본값('/drive')이면 자동으로 '/<namespace>/drive' 적용
+    effective_drive_topic = PythonExpression([
+        "'/' + '", namespace, "' + '/drive' if '", namespace, "' != '' and '", drive_topic, "' == '/drive' else '", drive_topic, "'"
+    ])
+
+    # 'map' 인자가 주어지면 map 우선, 아니면 'map_name' (기본값: monza_track) 사용
+    effective_map_name = PythonExpression([
+        "'", LaunchConfiguration('map'), "' if '", LaunchConfiguration('map'), "' != '' else '", map_name, "'"
+    ])
 
     # --- Dynamic Path Resolution ---
-    map_dir = PythonExpression(["'", lattice_pkg, "/maps/' + '", map_name, "'"])
-    map_yaml_file = PythonExpression(["'", map_dir, "/' + '", map_name, "_map.yaml'"])
+    map_dir = PythonExpression(["'", lattice_pkg, "/maps/' + '", effective_map_name, "'"])
+    map_yaml_file = PythonExpression(["'", map_dir, "/' + '", effective_map_name, "_map.yaml'"])
     default_dynamic_raceline = PythonExpression(["'", map_dir, "/raceline1.csv'"])
 
     raceline_arg = DeclareLaunchArgument(
@@ -144,7 +201,7 @@ def generate_launch_description():
     )
 
     # 5. SLAM Lattice Planner Node (주행 플래너 - planned_trajectory 발행)
-    # [수정] max_steering_angle을 0.4189에서 0.26으로 낮추어 VESC 서보 클리핑 발생 차단
+    # [물리 한계] max_steering_angle을 0.26 rad(14.9°)로 고정 (서보 클리핑 및 프레임 간섭 방지)
     lattice_planner_node = Node(
         package='f1tenth_lattice_ros2',
         executable='slam_planner_node',
@@ -158,6 +215,11 @@ def generate_launch_description():
             'max_steering_angle': 0.26,
             'plan_frequency': plan_freq,
             'localization_mode': loc_mode,
+            'overtake_mode': overtake_mode,
+            'opponent_namespace': opponent_ns,
+            'opponent_odom_topic': opponent_topic,
+            'enable_overtake': enable_overtake,
+            'opponent_weight': opponent_weight,
             'use_sim_time': False
         }]
     )
@@ -183,8 +245,8 @@ def generate_launch_description():
             'use_sim_time': False
         }],
         remappings=[
-            ('drive', drive_topic),
-            ('/drive', drive_topic)
+            ('drive', effective_drive_topic),
+            ('/drive', effective_drive_topic)
         ]
     )
 
@@ -210,17 +272,10 @@ def generate_launch_description():
         condition=IfCondition(record_bag)
     )
 
-    return LaunchDescription([
-        map_name_arg,
-        raceline_arg,
-        config_arg,
-        amcl_config_arg,
-        max_speed_arg,
-        drive_topic_arg,
-        plan_freq_arg,
-        loc_mode_arg,
-        use_global_loc_arg,
-        record_bag_arg,
+    # namespace가 지정된 경우(예: namespace:=car1) 하위 노드들을 해당 네임스페이스로 그룹핑
+    # namespace가 비어있으면 기존과 100% 동일하게 루트(/) 네임스페이스로 동작
+    real_nodes_group = GroupAction([
+        PushRosNamespace(namespace),
         map_server_node,
         amcl_node,
         lifecycle_manager_node_amcl,
@@ -229,4 +284,25 @@ def generate_launch_description():
         lattice_planner_node,
         pure_pursuit_controller_node,
         joy_bag_recorder_node
+    ])
+
+    return LaunchDescription([
+        namespace_arg,
+        map_arg,
+        map_name_arg,
+        raceline_arg,
+        config_arg,
+        amcl_config_arg,
+        max_speed_arg,
+        drive_topic_arg,
+        plan_freq_arg,
+        loc_mode_arg,
+        overtake_mode_arg,
+        opponent_ns_arg,
+        opponent_topic_arg,
+        enable_overtake_arg,
+        opponent_weight_arg,
+        use_global_loc_arg,
+        record_bag_arg,
+        real_nodes_group
     ])

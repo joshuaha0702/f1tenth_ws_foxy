@@ -43,8 +43,8 @@ amcl:
     selective_resampling: false
     
     # Update thresholds
-    update_min_d: 0.1
-    update_min_a: 0.2
+    update_min_d: 0.05
+    update_min_a: 0.05
     
     transform_tolerance: 1.0
     tf_broadcast: true
