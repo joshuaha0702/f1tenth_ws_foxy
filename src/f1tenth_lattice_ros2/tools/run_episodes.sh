@@ -10,8 +10,9 @@
 # Launch logs go to <output root>/logs/<map>.log. An existing <output root>/<map>
 # folder is replaced, and a launch where a car fails to spawn is retried (3 tries).
 # If the episode manager aborts a map because a car stopped responding to its drive
-# commands ("drive chain dead, aborting map") or an End2Race agent never published a
-# drive command ("[dead-agent] ... aborting map"), the map is relaunched with
+# commands ("drive chain dead, aborting map") or a car's agent (End2Race or lattice
+# planner/controller) never published a drive command ("[dead-agent] ... aborting map"),
+# the map is relaunched with
 # start_episode:=<last completed episode + 1>, keeping the bags recorded so far
 # (up to 5 relaunches per map; relaunch logs go to <output root>/logs/<map>_relaunchN.log).
 #

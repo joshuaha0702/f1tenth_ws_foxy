@@ -143,6 +143,9 @@ def main():
     parser.add_argument('root')
     parser.add_argument('--maps-dir', default=os.path.join(os.path.dirname(__file__), '..', 'maps'))
     parser.add_argument('--csv', help='write one row per episode')
+    parser.add_argument('--raceline-name', default='raceline1.csv',
+                        help='maps/<map>/ 안의 raceline 파일명. 역방향(CCW) 수집은 raceline1_ccw.csv '
+                             '(CW raceline 으로 투영하면 진행량이 음수가 되어 추월이 0%% 로 집계됨)')
     args = parser.parse_args()
 
     typestore = get_typestore(Stores.ROS2_FOXY)
@@ -150,7 +153,7 @@ def main():
     skipped = {}
     for map_dir in sorted(glob.glob(os.path.join(args.root, '*', ''))):
         name = os.path.basename(os.path.dirname(map_dir))
-        raceline = os.path.join(args.maps_dir, name, 'raceline1.csv')
+        raceline = os.path.join(args.maps_dir, name, args.raceline_name)
         if name == 'logs' or not os.path.exists(raceline):
             continue
         xy, s, lap = load_raceline(raceline)

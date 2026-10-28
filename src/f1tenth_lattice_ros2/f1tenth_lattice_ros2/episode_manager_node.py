@@ -50,7 +50,7 @@ class DriveChainDead(Exception):
 
 
 class DeadAgent(DriveChainDead):
-    """에이전트(End2Race 등)가 살아 있는데 /carN/drive를 한 번도 안 냄 → 새 프로세스만이 해결책.
+    """에이전트(End2Race·lattice planner/controller 무관)가 /carN/drive를 한 번도 안 냄 → 새 프로세스만이 해결책.
     DriveChainDead와 같은 경로(exit code 3 → run_episodes.sh 재시작)로 맵을 중단한다."""
 
 
@@ -967,7 +967,8 @@ class EpisodeManagerNode(Node):
                 self.get_logger().warn(f'[{ep_label}] bag incomplete, out of retries — {"; ".join(problems)}')
             # 에이전트가 drive를 한 번도 안 냈으면 주차된 차가 받힌 것처럼 채점되지 않도록
             # bag을 버린다(완료 로그 없음 → 재시작 시 이 에피소드부터 다시 돈다).
-            dead_topics = self.dead_agent_topics(problems, self.head2head and not self.car2_planner)
+            # car1은 항상, car2는 head2head면 누가 몰든(End2Race/lattice) 본다.
+            dead_topics = self.dead_agent_topics(problems, self.head2head)
             if dead_topics:
                 shutil.rmtree(staging_bag_path, ignore_errors=True)
                 abort = self._dead_agent_abort(dead_topics)
@@ -977,8 +978,9 @@ class EpisodeManagerNode(Node):
                 )
                 if abort:
                     for topic in dead_topics:
+                        car = topic.strip('/').split('/')[0]
                         self.get_logger().fatal(
-                            f'[dead-agent] {topic} never published for {self._dead_agent_strikes} '
+                            f'[dead-agent] {car}: {topic} never published for {self._dead_agent_strikes} '
                             f'episodes — aborting map'
                         )
                     raise DeadAgent(', '.join(dead_topics))
@@ -1041,11 +1043,13 @@ class EpisodeManagerNode(Node):
         return all_attempts_stuck or self._stuck_strikes >= self.STUCK_STRIKES_ABORT
 
     @staticmethod
-    def dead_agent_topics(problems, watch_car2: bool) -> list:
+    def dead_agent_topics(problems, head2head: bool) -> list:
         """재시도를 다 쓴 뒤의 problems에서 '에이전트 무응답' drive 토픽 목록을 뽑는다.
-        car1은 항상, car2는 End2Race 선두차(car2_planner=false)일 때만 본다
-        (lattice 선두차의 drive 공백은 기존 stuck/bag 검사가 다룸)."""
-        topics = ['/car1/drive'] + (['/car2/drive'] if watch_car2 else [])
+        기록되는 모든 차를 본다: car1은 항상, car2는 head2head면 누가 몰든
+        (End2Race 선두차든 lattice planner/controller 선두차든) 본다.
+        lattice 선두차도 drive를 한 번도 안 내면 차가 주차된 채 bag만 남으므로
+        (stuck 검사는 drive 명령이 있어야 잡음) 같은 dead-agent 경로로 맵을 재시작한다."""
+        topics = ['/car1/drive'] + (['/car2/drive'] if head2head else [])
         return [t for t in topics if f'{t} empty' in problems]
 
     def _dead_agent_abort(self, dead_topics) -> bool:

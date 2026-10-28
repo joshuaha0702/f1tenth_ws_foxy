@@ -1,0 +1,6 @@
+# End2Race 학습/오프라인 평가용 이미지 (train.py, openloop_eval.py, build_openloop_npz 제외).
+# 시뮬 이미지(f1tenth_ws_foxy-ros2_gpu: torch 2.4.1+cu118, pandas, matplotlib 포함)에 tqdm 만 추가.
+#   docker build -f Dockerfile.train -t f1tenth-train:local .
+#   docker run --rm --gpus all -v "$PWD":/ws -w /ws f1tenth-train:local python3 train.py ...
+FROM f1tenth_ws_foxy-ros2_gpu:latest
+RUN pip3 install --no-cache-dir tqdm

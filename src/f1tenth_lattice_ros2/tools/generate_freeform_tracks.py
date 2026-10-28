@@ -45,9 +45,9 @@ FOLLOW_KAPPA = 0.15        # raceline1 rows above this |curvature| form the foll
 # Gazebo's ackermann plugin brakes weakly (velocity P gain 1.0: a 0 m/s command still leaves the
 # car near 1.3 m/s for ~1 s), and these tracks force following behind slow leaders far more
 # often than the ovals, so following starts earlier and leaders are not as slow.
-FOLLOW_ALIGN_M = 5.0       # simple_augmented config: 3.0
-LEADER_V_SCALE_MIN = 0.45  # simple_augmented config: 0.3
-MIN_OVERTAKE_ROWS = 25     # straights shorter than this (rows of 0.2 m = 5 m) stay in follow mode:
+FOLLOW_ALIGN_M = 3.0       # same as the oval configs (was 5.0 while the sim could not brake, vel_p_gain 1.0)
+LEADER_V_SCALE_MIN = 0.3   # same as the oval configs (was 0.45 for the same reason)
+MIN_OVERTAKE_ROWS = 10     # straights shorter than this (rows of 0.2 m = 2 m) stay in follow mode (was 25 = 5 m):
                            # leaving follow on a short straight right behind the leader and
                            # switching back at the next corner caused rear-end contacts
 

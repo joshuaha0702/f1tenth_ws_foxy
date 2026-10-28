@@ -43,6 +43,8 @@ setup(
             'episode_manager_node = f1tenth_lattice_ros2.episode_manager_node:main',
             'bag2gazebo_node = f1tenth_lattice_ros2.bag2gazebo_node:main',
             'joy_bag_recorder_node = f1tenth_lattice_ros2.joy_bag_recorder_node:main',
+            # 종방향 step response 측정 (Gazebo/실차 공용; 원본은 tools/step_response.py)
+            'step_response = f1tenth_lattice_ros2.step_response:main',
         ],
     },
 )
