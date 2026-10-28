@@ -443,6 +443,8 @@ def get_obstacle_collision_with_v(traj, traj_clothoid, v_lattice, opp_poses,
     width, length = 0.31, 0.58
     safety_width_distance = 0.15
     safety_length_distance = 0.2
+    # 상대차 앞부분 여유 +0.10 m: 차량 모델뿐 아니라 추월 알고리즘 공격성 완화를 위한 마진 (2026-10-24)
+    opp_front_margin = 0.10
 
     traj_xyt = np.empty((traj.shape[0], traj.shape[1], 3), dtype=traj.dtype)
     traj_xyt[:, :, 0] = traj[:, :, 0]
@@ -482,10 +484,13 @@ def get_obstacle_collision_with_v(traj, traj_clothoid, v_lattice, opp_poses,
                 ego_box = get_vertices(ego_point, col_length, col_width)
                 for oi in range(opp_poses.shape[0]):
                     predicted_opp = np.empty(3)
-                    predicted_opp[0] = opp_poses[oi, 0] + opp_vels[oi, 0] * t_reach
-                    predicted_opp[1] = opp_poses[oi, 1] + opp_vels[oi, 1] * t_reach
                     predicted_opp[2] = opp_poses[oi, 2]
-                    opp_box = get_vertices(predicted_opp, col_length, col_width)
+                    # 박스를 앞쪽으로만 늘리기: 길이 +margin, 중심을 헤딩 방향으로 margin/2 이동
+                    predicted_opp[0] = (opp_poses[oi, 0] + opp_vels[oi, 0] * t_reach
+                                        + 0.5 * opp_front_margin * np.cos(predicted_opp[2]))
+                    predicted_opp[1] = (opp_poses[oi, 1] + opp_vels[oi, 1] * t_reach
+                                        + 0.5 * opp_front_margin * np.sin(predicted_opp[2]))
+                    opp_box = get_vertices(predicted_opp, col_length + opp_front_margin, col_width)
                     if collision(opp_box, ego_box):
                         point_cost = max_cost - j * (max_cost - min_cost) / m
                         if point_cost > max_collision_cost:

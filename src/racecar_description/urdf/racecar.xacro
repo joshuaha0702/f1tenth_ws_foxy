@@ -29,6 +29,21 @@
         <color rgba="1.0 0.2 0.2 0.35"/>
       </material>
     </visual>
+    <!-- 라이다 높이 차체 셸 (2026-10-20): 위 차체 박스(z 0.035~0.085 world)는 라이다 광선 평면
+         (laser z = chassis+0.075 = 0.125 world)보다 낮아, 상대차가 라이다에는 4 cm 라이다 큐브(2~3 bin)로만
+         보였다(실차는 차폭이 ~20빔으로 보임). 차폭 0.28 m 셸을 광선 평면에 걸치게 두어 상대차가
+         실차처럼 차폭만큼 잡히게 한다. 자기 라이다(x=0.265)가 자기 셸을 보지 않도록 셸은 라이다 뒤쪽
+         x <= 0.115 에만 둔다(±135° 광선이 셸 측면 y=0.14 를 스치는 한계 x=0.125). 풋프린트가 차체 박스
+         안이라 물리 접촉/범퍼 판정은 그대로다. -->
+    <collision name="lidar_body_shell">
+      <origin xyz="0 0 0.075" rpy="0 0 0"/>
+      <geometry><box size="0.23 0.28 0.06"/></geometry>
+    </collision>
+    <visual name="lidar_body_shell_visual">
+      <origin xyz="0 0 0.075" rpy="0 0 0"/>
+      <geometry><box size="0.23 0.28 0.06"/></geometry>
+      <material name="${chassis_color}" />
+    </visual>
     <!-- chassis에 직접 실제 inertial 부여 → fixed-joint lumping 방지
          (이전에는 별도 chassis_inertia link에 있었음) -->
     <inertial><xacro:chassis_inertial_params /></inertial>

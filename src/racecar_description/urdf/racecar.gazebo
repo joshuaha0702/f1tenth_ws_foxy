@@ -2,6 +2,9 @@
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
   <xacro:arg name="params_file" default="$(find racecar_description)/config/params.yaml" />
   <xacro:property name="config" value="${xacro.load_yaml('$(arg params_file)')}" />
+  <!-- Gazebo ackermann plugin longitudinal velocity P gain (sim-to-real matching;
+       spawn_car.launch.py vel_p_gain:=..., default 0.1; 1.0 (old hard-coded) made the rear wheels lock-spin under braking) -->
+  <xacro:arg name="vel_p_gain" default="0.1" />
   <xacro:macro name="racecar_gazebo" params="namespace visualize_lidar:=true">
     <!-- Chassis physics -->
     <gazebo reference="chassis">
@@ -54,6 +57,8 @@
         <wheel_separation>0.2</wheel_separation>
         <wheel_diameter>0.1</wheel_diameter>
         <wheelbase>0.325</wheelbase>
+        <!-- NOTE: gazebo_ros_ackermann_drive (Foxy, gazebo_plugins 3.5.3) never reads
+             max_wheel_torque (nor wheel_diameter/wheelbase); the velocity PID output is unclamped. -->
         <max_wheel_torque>5000</max_wheel_torque>
         
         <max_speed>10.0</max_speed>
@@ -61,7 +66,7 @@
         <max_steering_angle_velocity>5.0</max_steering_angle_velocity>
 
         <!-- ★ 클로드 수정본: ROS 2 플러그인용 올바른 PID 파라미터 이름 -->
-        <linear_velocity_pid_gain>1.0 0.0 0.0</linear_velocity_pid_gain>
+        <linear_velocity_pid_gain>$(arg vel_p_gain) 0.0 0.0</linear_velocity_pid_gain>
         <left_steering_pid_gain>2.0 0.0 0.0</left_steering_pid_gain>
         <right_steering_pid_gain>2.0 0.0 0.0</right_steering_pid_gain>
         

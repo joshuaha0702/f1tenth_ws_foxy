@@ -18,6 +18,7 @@ def launch_setup(context, *args, **kwargs):
     color = LaunchConfiguration('color')
     launch_gazebo = LaunchConfiguration('launch_gazebo')
     visualize_lidar = LaunchConfiguration('visualize_lidar')
+    vel_p_gain = LaunchConfiguration('vel_p_gain')
     gui = LaunchConfiguration('gui')
     gazebo_record = LaunchConfiguration('gazebo_record')
     
@@ -54,7 +55,8 @@ def launch_setup(context, *args, **kwargs):
         Command(['xacro ', xacro_file,
                  ' namespace:=', namespace_val,
                  ' color:=', color,
-                 ' visualize_lidar:=', visualize_lidar]),
+                 ' visualize_lidar:=', visualize_lidar,
+                 ' vel_p_gain:=', vel_p_gain]),
         value_type=str
     )
 
@@ -142,6 +144,9 @@ def generate_launch_description():
     declare_color_cmd = DeclareLaunchArgument('color', default_value='blue')
     declare_visualize_lidar_cmd = DeclareLaunchArgument('visualize_lidar', default_value='true',
                                                         description='LiDAR 레이 시각화 여부')
+    declare_vel_p_gain_cmd = DeclareLaunchArgument(
+        'vel_p_gain', default_value='0.1',
+        description='Gazebo ackermann plugin linear_velocity_pid_gain P term (sim-to-real longitudinal matching)')
 
     return LaunchDescription([
         declare_map_cmd,
@@ -154,5 +159,6 @@ def generate_launch_description():
         declare_gazebo_record_cmd,
         declare_color_cmd,
         declare_visualize_lidar_cmd,
+        declare_vel_p_gain_cmd,
         OpaqueFunction(function=launch_setup)
     ])
