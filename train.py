@@ -114,6 +114,8 @@ def parse_arguments():
     parser.add_argument("--selffeed_every", type=int, default=10)
     parser.add_argument("--selffeed_episodes", type=int, default=40)
     parser.add_argument("--selffeed_max_speed", type=float, default=3.0)
+    parser.add_argument("--num_workers", type=int, default=4,
+                        help="Number of DataLoader worker processes (default: 4)")
 
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--learning_rate", type=float, default=0.001)
@@ -129,7 +131,11 @@ def parse_arguments():
     parser.add_argument("--val_fraction", type=float, default=0.1)
     parser.add_argument("--val_seed", type=int, default=42)
 
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.downsample_factor == 1:
+        args.downsample_mode = "fixed"
+        args.lidar_stride = 1
+    return args
 
 
 def extract_lidar_sync_df(df, lidar_cols, stride: int = 3, offset: int = 0):
@@ -550,7 +556,7 @@ def error_columns(prefix: str, metrics: dict) -> dict:
 def train(model_path, model, train_loader, optimizer, scheduler,
           num_epochs=100, use_lidar_delay=False, start_epoch=0, best_loss=float("inf"),
           val_episodes=None, selffeed_batch=None, selffeed_every=10, selffeed_max_speed=3.0,
-          save_interval=10, is_norm=False):
+          save_interval=10, is_norm=False, add_lidar_noise=True):
     loss_history = []
     loss_csv_path, loss_plot_path = get_loss_output_paths(model_path)
     os.makedirs(os.path.dirname(os.path.abspath(model_path)), exist_ok=True)
@@ -562,6 +568,7 @@ def train(model_path, model, train_loader, optimizer, scheduler,
     interval_best_loss = float("inf")
     interval_best_epoch = -1
     interval_best_state = None
+    device = next(model.parameters()).device
 
     try:
         for epoch in range(start_epoch, num_epochs):
@@ -573,6 +580,11 @@ def train(model_path, model, train_loader, optimizer, scheduler,
 
             with tqdm(train_loader, desc=f"Epoch {epoch + 1}/{num_epochs}") as pbar:
                 for batch_idx, batch in enumerate(pbar):
+                    batch = [b.to(device, non_blocking=True) if isinstance(b, torch.Tensor) else b for b in batch]
+                    if add_lidar_noise:
+                        lidar = batch[0]
+                        std = (0.01 + 0.005 * lidar).clamp(max=0.1)
+                        batch[0] = (lidar + torch.randn_like(lidar) * std).clamp(min=0.0)
                     if callable(scheduler):
                         scheduler(epoch + (batch_idx / len(train_loader)))
                     optimizer.zero_grad()
@@ -720,7 +732,7 @@ if __name__ == "__main__":
         use_lidar_delay=use_lidar_delay,
         stride=args.stride,
         device=device,
-        add_lidar_noise=not args.disable_lidar_noise,
+        add_lidar_noise=False,  # Optimized: moved to GPU batch augmentation in train()
         start_from_rest=args.start_from_rest,
         seq_lengths=args.seq_lengths,
         balance_leader_near=args.balance_leader_near,
@@ -753,7 +765,7 @@ if __name__ == "__main__":
 
     if args.skip_first_s > 0:
         print(f"Loss/validation skip the first {args.skip_first_s} s of every episode (rows still fed to the GRU)")
-    print(f"LiDAR noise augmentation: {'disabled' if args.disable_lidar_noise else 'enabled'}")
+    print(f"LiDAR noise augmentation: {'disabled' if args.disable_lidar_noise else 'enabled (GPU batch-accelerated)'}")
     if args.downsample_factor > 1:
         print(f"Downsample mode: {args.downsample_mode} (lidar_stride={args.lidar_stride}, multi_phase={not args.no_multi_phase})")
 
@@ -765,7 +777,8 @@ if __name__ == "__main__":
                       if val_episodes and not use_lidar_delay and args.speed_input in ("hybrid", "command", "none")
                       else None)
 
-    dataloader_kwargs = {'pin_memory': False, 'num_workers': 0} if device.type != "cpu" else {}
+    dataloader_kwargs = {'pin_memory': True, 'num_workers': args.num_workers} if device.type != "cpu" else {}
+    print(f"DataLoader: {args.num_workers} workers, pin_memory={device.type != 'cpu'}")
     if args.seq_lengths:
         train_loader = DataLoader(
             dataset,
@@ -864,6 +877,7 @@ if __name__ == "__main__":
         selffeed_max_speed=args.selffeed_max_speed,
         save_interval=args.save_interval,
         is_norm=is_norm,
+        add_lidar_noise=not args.disable_lidar_noise,
     )
 
     print("\nTraining completed successfully!")
