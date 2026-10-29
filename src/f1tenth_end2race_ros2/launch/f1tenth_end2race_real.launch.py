@@ -85,7 +85,7 @@ def generate_launch_description():
     )
 
     # ============================================================
-    # Joy Bag Recorder Node (조이스틱 7번/6번 버튼 녹화 제어)
+    # Joy Bag Recorder Node (조이스틱 7번=solo / 8번=comp 녹화 시작, 6번=중지)
     # ============================================================
     record_bag_arg = DeclareLaunchArgument(
         'record_bag', default_value='true',
@@ -99,9 +99,11 @@ def generate_launch_description():
         name='joy_bag_recorder',
         output='screen',
         parameters=[{
-            'start_button': 7,  # 7번 버튼: 시작
-            'stop_button': 6,   # 6번 버튼: 중지
+            'start_button': 7,       # 7번 버튼: 단일(solo) 녹화 시작
+            'comp_start_button': 8,  # 8번 버튼: 경쟁(comp) 녹화 시작
+            'stop_button': 6,        # 6번 버튼: 녹화 중지 (공통)
             'bag_prefix': 'end2race_run',
+            'model_path': model_path,
             'output_dir': 'bags'
         }],
         condition=IfCondition(record_bag)
