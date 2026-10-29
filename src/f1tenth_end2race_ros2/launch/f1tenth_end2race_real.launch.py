@@ -41,6 +41,12 @@ def generate_launch_description():
         'use_norm', default_value='auto',
         description='정규화 모델 사용 여부 (auto / true / false, 기본값: auto)'
     )
+    # 모델 추론 주기. 모델이 학습된 주기와 같아야 한다 (100 Hz 모델=100.0, ds30=30.0, ds10=10.0).
+    # 기본값 10.0 은 agent_node 의 기존 기본값과 동일 (인자 추가 전과 동작이 같음).
+    model_rate_hz_arg = DeclareLaunchArgument(
+        'model_rate_hz', default_value='10.0',
+        description='모델 추론 주기 Hz (100Hz 학습 모델=100.0, ds30=30.0, ds10=10.0, 기본값: 10.0)'
+    )
     use_rviz_arg = DeclareLaunchArgument(
         'use_rviz', default_value='false',
         description='원격 모니터링용 RViz2 실행 여부 (실차에선 보통 false, 개발 PC에서 볼 때 true)'
@@ -65,6 +71,7 @@ def generate_launch_description():
             'speed_input': LaunchConfiguration('speed_input'),
             'control': {'steer_lpf_tau': ParameterValue(LaunchConfiguration('steer_lpf_tau'), value_type=float)},
             'use_norm': use_norm,
+            'model_rate_hz': ParameterValue(LaunchConfiguration('model_rate_hz'), value_type=float),
         }],
         remappings=[
             (['/', namespace, '/scan'], '/scan'),
@@ -115,6 +122,7 @@ def generate_launch_description():
         speed_input_arg,
         steer_lpf_tau_arg,
         use_norm_arg,
+        model_rate_hz_arg,
         use_rviz_arg,
         record_bag_arg,
         agent_node,
