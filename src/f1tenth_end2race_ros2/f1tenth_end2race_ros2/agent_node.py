@@ -7,9 +7,11 @@ import numpy as np
 import torch
 import os
 import time
+import gc
+import threading
 from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import Odometry
-from std_msgs.msg import String
+from std_msgs.msg import String, Float64MultiArray, MultiArrayDimension
 from ackermann_msgs.msg import AckermannDriveStamped
 from .model import End2Race, End2RaceNorm, speed_dims_from_state_dict, hidden_scale_from_state_dict
 from .scan_preprocess import build_scan_mapping, pool_scan
@@ -53,6 +55,11 @@ class End2RaceAgent(Node):
         self.declare_parameter('speed_input', 'command')
         # 전처리(360 bin) scan 을 RViz 확인용으로 발행할지. 추론에는 쓰이지 않는다 (실차 launch 는 use_rviz 에 연동).
         self.declare_parameter('publish_preprocess_scan', True)
+        # 타이밍 진단: scan 콜백·drive 틱·프로세스 상태를 1 초 단위로 묶어 /end2race/diag/{scan,tick,sys} 로 발행.
+        # scan_qos_depth / legacy_callback_groups 는 수정 전(큐 10, scan·drive 같은 Reentrant 그룹) 재현용.
+        self.declare_parameter('diag.timing', False)
+        self.declare_parameter('diag.scan_qos_depth', 1)
+        self.declare_parameter('diag.legacy_callback_groups', False)
 
         self.robot_name = self.get_parameter('robot_name').value
         self.model_path = self.get_parameter('model_path').value
@@ -87,6 +94,9 @@ class End2RaceAgent(Node):
                                f"하나여야 합니다: {self.speed_input}")
         self.uses_odom = self.speed_input in ('odom', 'hybrid')
         self.publish_preprocess_scan = bool(self.get_parameter('publish_preprocess_scan').value)
+        self.diag_timing = bool(self.get_parameter('diag.timing').value)
+        self.scan_qos_depth = int(self.get_parameter('diag.scan_qos_depth').value)
+        self.legacy_callback_groups = bool(self.get_parameter('diag.legacy_callback_groups').value)
         
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.num_features = 360 # model.num_features와 일치
@@ -163,6 +173,7 @@ class End2RaceAgent(Node):
         # 최신 라이다 데이터 및 타임스탬프
         self.latest_ranges = None
         self.latest_scan_stamp = None
+        self.latest_scan_id = -1
 
         # 각도 기준 다운스케일 매핑 캐시 (라이다 기하가 바뀔 때만 재계산)
         self._scan_cache = {}
@@ -176,6 +187,11 @@ class End2RaceAgent(Node):
         self._inference_started = None     # 진행 중인 inference_step 시작 시각 (없으면 None)
         self._slow_inference_logged = False
         self._watchdog_period = 5.0
+        # 추론에 쓴 scan 의 나이 (추론 시각 - scan header stamp) [s]. 11/01 p08 bag 에서 노드가 bag 보다
+        # ~100 ms 늦은 scan 으로 추론한 것이 확인되어 실차에서 직접 보이도록 watchdog 주기마다 로그.
+        self._scan_age_sum = 0.0
+        self._scan_age_max = 0.0
+        self._scan_age_n = 0
 
         # 4. ROS 2 Pub/Sub — scan / drive 콜백을 각자 MutuallyExclusive 그룹에 둔다.
         #    두 그룹끼리는 병렬 실행되고, drive 콜백끼리는 겹치지 않아 hidden_state 를 동시에 읽고 쓰지 않는다.
@@ -186,13 +202,18 @@ class End2RaceAgent(Node):
                                f"speed_input='{self.speed_input}'")
 
         cb_group = ReentrantCallbackGroup()
-        scan_group = MutuallyExclusiveCallbackGroup()
-        drive_group = MutuallyExclusiveCallbackGroup()
-        # 큐 깊이 1: 처리가 밀려도 쌓인 옛 scan 을 차례로 소비하지 않고 항상 최신 scan 만 쓴다.
-        self.scan_sub = self.create_subscription(LaserScan, scan_topic, self.scan_callback, 1, callback_group=scan_group)
+        if self.legacy_callback_groups:
+            scan_group = drive_group = cb_group   # 수정 전 구성 (진단 비교용)
+        else:
+            scan_group = MutuallyExclusiveCallbackGroup()
+            drive_group = MutuallyExclusiveCallbackGroup()
+        # 큐 깊이 1(기본): 처리가 밀려도 쌓인 옛 scan 을 차례로 소비하지 않고 항상 최신 scan 만 쓴다.
+        self.scan_sub = self.create_subscription(LaserScan, scan_topic, self.scan_callback, self.scan_qos_depth,
+                                                 callback_group=scan_group)
         self.drive_pub = self.create_publisher(AckermannDriveStamped, drive_topic, 10)
         self.preprocess_scan_pub = (self.create_publisher(LaserScan, f'{prefix}/preprocess_scan', 10)
                                     if self.publish_preprocess_scan else None)
+        self._init_timing_diag()
 
         # EpisodeManager의 /episode/control(START/STOP)을 따라 일시정지하고,
         # STOP마다 GRU hidden state와 이전 속도를 초기화해 에피소드를 독립적으로 만든다.
@@ -222,6 +243,88 @@ class End2RaceAgent(Node):
             self._watchdog_period, self._watchdog_callback,
             clock=Clock(clock_type=ClockType.STEADY_TIME), callback_group=self._watchdog_group)
 
+    # ---------------- 타이밍 진단 ----------------
+    SCAN_FIELDS = ('scan_id', 't_header', 't_cb_start', 'cb_wait', 'dur_preproc', 'dur_pub', 'dur_total',
+                   'drive_active')
+    TICK_FIELDS = ('tick', 't_start', 'dt_prev', 'inferred', 'scan_id', 't_scan_header', 'scan_age',
+                   'dur_input', 'dur_infer', 'dur_total', 'scan_active', 'drive_active')
+    SYS_FIELDS = ('t', 'loadavg1', 'proc_cpu_pct', 'n_threads', 'gc_n', 'gc_total_ms', 'gc_max_ms',
+                  'executor_threads', 'scan_qos_depth', 'legacy_groups', 'publish_pre')
+
+    def _init_timing_diag(self):
+        self._diag_lock = threading.Lock()
+        self._active_scan = 0
+        self._active_drive = 0
+        self._last_tick_start = None
+        self._diag_scan_rows, self._diag_tick_rows = [], []
+        self._diag_p1 = 0.0
+        self._diag_tls = threading.local()   # 틱별 추론 기록 (수정 전 구성에서 drive 콜백이 겹쳐도 섞이지 않게)
+        self._gc_t0 = None
+        self._gc_n, self._gc_total, self._gc_max = 0, 0.0, 0.0
+        self._proc_cpu_prev = None
+        self.executor_threads = 0
+        if not self.diag_timing:
+            return
+        self._diag_pubs = {k: self.create_publisher(Float64MultiArray, f'/end2race/diag/{k}', 10)
+                           for k in ('scan', 'tick', 'sys')}
+        gc.callbacks.append(self._gc_callback)
+        self.create_timer(1.0, self._flush_timing_diag, clock=Clock(clock_type=ClockType.STEADY_TIME),
+                          callback_group=MutuallyExclusiveCallbackGroup())
+        self.get_logger().info(
+            f"[{self.robot_name}] [diag] 타이밍 기록 켜짐 → /end2race/diag/{{scan,tick,sys}} "
+            f"(scan 큐 {self.scan_qos_depth}, 콜백 그룹 {'수정 전(공유 Reentrant)' if self.legacy_callback_groups else '분리'}, "
+            f"preprocess_scan 발행 {'켜짐' if self.publish_preprocess_scan else '꺼짐'})")
+
+    def _ros_now(self):
+        return self.get_clock().now().nanoseconds * 1e-9
+
+    def _gc_callback(self, phase, info):
+        if phase == 'start':
+            self._gc_t0 = time.perf_counter()
+        elif self._gc_t0 is not None:
+            d = time.perf_counter() - self._gc_t0
+            self._gc_n += 1; self._gc_total += d; self._gc_max = max(self._gc_max, d)
+            self._gc_t0 = None
+
+    def _proc_cpu_pct(self):
+        try:
+            with open('/proc/self/stat') as f:
+                fields = f.read().rsplit(')', 1)[1].split()
+            ticks = int(fields[11]) + int(fields[12])   # utime + stime
+            now = time.monotonic()
+            prev, self._proc_cpu_prev = self._proc_cpu_prev, (now, ticks)
+            if prev is None:
+                return float('nan')
+            return 100.0 * (ticks - prev[1]) / os.sysconf('SC_CLK_TCK') / max(now - prev[0], 1e-6)
+        except Exception:
+            return float('nan')
+
+    def _publish_rows(self, key, fields, rows):
+        msg = Float64MultiArray()
+        msg.layout.dim = [MultiArrayDimension(label='rows', size=len(rows), stride=len(rows) * len(fields)),
+                          MultiArrayDimension(label=','.join(fields), size=len(fields), stride=len(fields))]
+        msg.data = [float(v) for row in rows for v in row]
+        self._diag_pubs[key].publish(msg)
+
+    def _flush_timing_diag(self):
+        with self._diag_lock:
+            scan_rows, self._diag_scan_rows = self._diag_scan_rows, []
+            tick_rows, self._diag_tick_rows = self._diag_tick_rows, []
+            gc_stats = (self._gc_n, self._gc_total * 1000.0, self._gc_max * 1000.0)
+            self._gc_n, self._gc_total, self._gc_max = 0, 0.0, 0.0
+        try:
+            load1 = os.getloadavg()[0]
+        except OSError:
+            load1 = float('nan')
+        sys_row = (self._ros_now(), load1, self._proc_cpu_pct(), threading.active_count(), *gc_stats,
+                   self.executor_threads, self.scan_qos_depth, float(self.legacy_callback_groups),
+                   float(self.publish_preprocess_scan))
+        if scan_rows:
+            self._publish_rows('scan', self.SCAN_FIELDS, scan_rows)
+        if tick_rows:
+            self._publish_rows('tick', self.TICK_FIELDS, tick_rows)
+        self._publish_rows('sys', self.SYS_FIELDS, [sys_row])
+
     def _reset_control_state(self):
         """에피소드 정지 및 재시작 시 제어/보간 내부 상태 초기화"""
         self.hidden_state = None
@@ -240,6 +343,13 @@ class End2RaceAgent(Node):
     def _watchdog_callback(self):
         if not self.publishing_enabled:
             return
+        if self._scan_age_n > 0:
+            self.get_logger().info(
+                f"[{self.robot_name}] [diag] 추론 scan 나이 평균 {self._scan_age_sum / self._scan_age_n * 1000.0:.0f} ms, "
+                f"최대 {self._scan_age_max * 1000.0:.0f} ms (추론 {self._scan_age_n}회)")
+            self._scan_age_sum = 0.0
+            self._scan_age_max = 0.0
+            self._scan_age_n = 0
         now = time.monotonic()
         no_scan = self._scan_count == 0
         drive_stale = (self._last_drive_wall is None
@@ -266,6 +376,23 @@ class End2RaceAgent(Node):
             f"가동 {now - self._diag_start:.0f}s)")
 
     def scan_callback(self, msg):
+        if self.diag_timing:
+            p0 = time.perf_counter(); t_cb = self._ros_now()
+            with self._diag_lock:
+                self._active_scan += 1
+                drive_active = self._active_drive
+        try:
+            self._scan_callback(msg)
+        finally:
+            if self.diag_timing:
+                p2 = time.perf_counter()
+                t_h = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+                with self._diag_lock:
+                    self._active_scan -= 1
+                    self._diag_scan_rows.append((self.latest_scan_id, t_h, t_cb, t_cb - t_h,
+                                                 self._diag_p1 - p0, p2 - self._diag_p1, p2 - p0, drive_active))
+
+    def _scan_callback(self, msg):
         # 학습 CSV(extract_bag_csv.py)와 같은 함수로 360개 feature를 만든다.
         key = (len(msg.ranges), msg.angle_min, msg.angle_increment)
         if key not in self._scan_cache:
@@ -281,6 +408,8 @@ class End2RaceAgent(Node):
 
         self.latest_ranges = out
         self.latest_scan_stamp = msg.header.stamp
+        self.latest_scan_id += 1
+        self._diag_p1 = time.perf_counter()   # 추론에 쓸 수 있게 된 시점 (진단용)
         self._scan_count += 1
         if self._scan_count == 1:
             self.get_logger().info(f"[{self.robot_name}] 첫 scan 수신 ({len(msg.ranges)} beams)")
@@ -346,6 +475,28 @@ class End2RaceAgent(Node):
         self.measured_speed = float(msg.twist.twist.linear.x)
 
     def drive_callback(self, stamp=None):
+        if not self.diag_timing:
+            self._drive_callback(stamp)
+            return
+        p0 = time.perf_counter(); t_start = self._ros_now()
+        with self._diag_lock:
+            self._active_drive += 1
+            drive_active = self._active_drive - 1
+            scan_active = self._active_scan
+        self._diag_tls.tick = None
+        try:
+            self._drive_callback(stamp)
+        finally:
+            p_end = time.perf_counter()
+            dt_prev = t_start - self._last_tick_start if self._last_tick_start is not None else float('nan')
+            self._last_tick_start = t_start
+            d = self._diag_tls.tick or (0.0, -1.0, float('nan'), float('nan'), float('nan'), float('nan'))
+            with self._diag_lock:
+                self._active_drive -= 1
+                self._diag_tick_rows.append((self.tick_counter, t_start, dt_prev, *d, p_end - p0,
+                                             scan_active, drive_active))
+
+    def _drive_callback(self, stamp=None):
         if self.latest_ranges is None or not self.publishing_enabled:
             return
 
@@ -362,6 +513,8 @@ class End2RaceAgent(Node):
             else:
                 speed_in = self.last_inference_speed
 
+            scan_id_used, scan_stamp_used = self.latest_scan_id, self.latest_scan_stamp
+            p_in = time.perf_counter()
             t0 = time.monotonic()
             self._inference_started = t0
             try:
@@ -382,7 +535,18 @@ class End2RaceAgent(Node):
                 self._inference_started = None
 
             latency = time.monotonic() - t0
+            if self.diag_timing:
+                t_sh = (scan_stamp_used.sec + scan_stamp_used.nanosec * 1e-9) if scan_stamp_used is not None else float('nan')
+                # (inferred, scan_id, t_scan_header, scan_age, dur_input, dur_infer)
+                self._diag_tls.tick = (1.0, float(scan_id_used), t_sh, self._ros_now() - latency - t_sh,
+                                   t0 - p_in, latency)
             self._inference_count += 1
+            if self.trigger != 'odom' and self.latest_scan_stamp is not None:
+                age = self.get_clock().now().nanoseconds * 1e-9 - (
+                    self.latest_scan_stamp.sec + self.latest_scan_stamp.nanosec * 1e-9)
+                self._scan_age_sum += age
+                self._scan_age_max = max(self._scan_age_max, age)
+                self._scan_age_n += 1
             if self._inference_count == 1:
                 self.get_logger().info(f"[{self.robot_name}] 첫 추론 완료: {latency * 1000.0:.1f} ms "
                                        f"(device: {self.device})")
@@ -437,6 +601,7 @@ def main(args=None):
     rclpy.init(args=args)
     node = End2RaceAgent()
     executor = MultiThreadedExecutor()
+    node.executor_threads = getattr(getattr(executor, '_executor', None), '_max_workers', 0) or 0
     executor.add_node(node)
     executor.spin()
     rclpy.shutdown()

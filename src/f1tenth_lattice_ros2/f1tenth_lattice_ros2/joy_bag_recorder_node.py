@@ -64,7 +64,11 @@ class JoyBagRecorderNode(Node):
             '/ackermann_drive',
             '/planned_trajectory',
             '/best_traj_marker',
-            '/obstacle_marker'
+            '/obstacle_marker',
+            # End2Race agent_node 타이밍 진단 (diag.timing 켜졌을 때만 발행됨)
+            '/end2race/diag/scan',
+            '/end2race/diag/tick',
+            '/end2race/diag/sys',
         ]
         if self.record_tf:
             self.record_topics.extend(['/tf', '/tf_static'])
