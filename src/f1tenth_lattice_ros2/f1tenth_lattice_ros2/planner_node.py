@@ -40,6 +40,18 @@ class LatticePlannerNode(Node):
         self.declare_parameter('opponent_namespace', '')
         self.declare_parameter('use_lidar_tracker', False)
 
+        # 장애물 감지 및 필터링 튜닝 파라미터
+        self.declare_parameter('obs_min_range', 0.15)
+        self.declare_parameter('obs_max_range', 3.5)
+        self.declare_parameter('obs_wall_min_dt', 0.28)
+        self.declare_parameter('obs_wall_mean_dt', 0.35)
+        self.declare_parameter('obs_point_jump', 0.20)
+        self.declare_parameter('obs_min_pts', 4)
+        self.declare_parameter('obs_max_span', 0.75)
+        self.declare_parameter('obs_corridor_width', 0.75)
+        self.declare_parameter('obs_tracker_min_hits', 3)
+        self.declare_parameter('obs_tracker_max_misses', 12)
+
         config_path = self.get_parameter('config_path').value
         raceline_path = self.get_parameter('raceline_path').value
         map_path = self.get_parameter('map_path').value
@@ -73,13 +85,26 @@ class LatticePlannerNode(Node):
         self.latest_odom_stamp = None
         self.best_traj = None
 
+        # 장애물 감지 튜닝 파라미터 로드
+        self.obs_min_range = float(self.get_parameter('obs_min_range').value)
+        self.obs_max_range = float(self.get_parameter('obs_max_range').value)
+        self.obs_wall_min_dt = float(self.get_parameter('obs_wall_min_dt').value)
+        self.obs_wall_mean_dt = float(self.get_parameter('obs_wall_mean_dt').value)
+        self.obs_point_jump = float(self.get_parameter('obs_point_jump').value)
+        self.obs_min_pts = int(self.get_parameter('obs_min_pts').value)
+        self.obs_max_span = float(self.get_parameter('obs_max_span').value)
+        self.obs_corridor_width = float(self.get_parameter('obs_corridor_width').value)
+        self.obs_tracker_min_hits = int(self.get_parameter('obs_tracker_min_hits').value)
+        self.obs_tracker_max_misses = int(self.get_parameter('obs_tracker_max_misses').value)
+
         # Opponent state (head-to-head mode)
         self.opp_pose = np.empty((0, 3))
         self.opp_vels = np.empty((0, 2))
+        self.latest_opp_odom_time = None
         self.obstacle_tracker = MultiObstacleTracker(
             max_match_dist=1.2,
-            min_hits_to_confirm=2,
-            max_misses_to_delete=5
+            min_hits_to_confirm=self.obs_tracker_min_hits,
+            max_misses_to_delete=self.obs_tracker_max_misses
         )
         self._last_plan_time = None
 
@@ -174,6 +199,7 @@ class LatticePlannerNode(Node):
         with self._state_lock:
             self.opp_pose = np.array([[x, y, theta]])
             self.opp_vels = np.array([[vx, vy]])
+            self.latest_opp_odom_time = self.get_clock().now()
 
     def _on_param_set(self, params):
         """외부에서 SetParameters 서비스로 들어오는 파라미터 변경을 처리.
@@ -259,6 +285,11 @@ class LatticePlannerNode(Node):
             self._publish_obstacle_markers(tracked)
         else:
             with self._state_lock:
+                if len(self.opp_pose) > 0 and self.latest_opp_odom_time is not None:
+                    if (now - self.latest_opp_odom_time).nanoseconds * 1e-9 > 0.5:
+                        self.opp_pose = np.empty((0, 3), dtype=np.float64)
+                        self.opp_vels = np.empty((0, 2), dtype=np.float64)
+                        self._publish_obstacle_markers([])
                 opp_poses = self.opp_pose.copy()
                 opp_vels = self.opp_vels.copy() if len(self.opp_vels) > 0 else None
 
@@ -305,10 +336,11 @@ class LatticePlannerNode(Node):
 
         angles = msg.angle_min + np.arange(n, dtype=np.float32) * msg.angle_increment
 
+        # 1. 거리 및 각도 필터링: 전방 [-1.9 rad, +1.9 rad], 유효 거리 [obs_min_range, obs_max_range]
         valid_mask = (
             np.isfinite(ranges) &
-            (ranges >= max(float(msg.range_min), 0.35)) &
-            (ranges <= min(float(msg.range_max), 5.0)) &
+            (ranges >= max(float(msg.range_min), self.obs_min_range)) &
+            (ranges <= min(float(msg.range_max), self.obs_max_range)) &
             (np.abs(angles) <= 1.9)
         )
         if not np.any(valid_mask):
@@ -317,63 +349,74 @@ class LatticePlannerNode(Node):
         v_ranges = ranges[valid_mask]
         v_angles = angles[valid_mask]
 
+        # 2. base_link 좌표 변환 (라이다 장착 위치 x=0.27m 전방)
         xb = v_ranges * np.cos(v_angles) + 0.27
         yb = v_ranges * np.sin(v_angles)
 
-        fwd_mask = xb > 0.1
+        # 차량 후방 제외 (범퍼 앞쪽 5cm부터 허용)
+        fwd_mask = xb > 0.05
         if not np.any(fwd_mask):
             return np.empty((0, 3), dtype=np.float64)
 
         xb = xb[fwd_mask]
         yb = yb[fwd_mask]
 
+        # 3. map 좌표계 변환
         cos_t = math.cos(pose_theta)
         sin_t = math.sin(pose_theta)
         xm = pose_x + (cos_t * xb - sin_t * yb)
         ym = pose_y + (sin_t * xb + cos_t * yb)
 
-        dt = self.planner.dt
-        orig_x, orig_y, orig_c, orig_s, height, width, resolution = self.planner.map_metainfo
-
-        obs_x = []
-        obs_y = []
-        for x, y in zip(xm, ym):
-            r, c = xy_2_rc(float(x), float(y), orig_x, orig_y, orig_c, orig_s, height, width, resolution)
-            if 0 <= r < height and 0 <= c < width:
-                if dt[r, c] > 0.22:
-                    obs_x.append(float(x))
-                    obs_y.append(float(y))
-
-        if len(obs_x) < 6:
+        if len(xm) < self.obs_min_pts:
             return np.empty((0, 3), dtype=np.float64)
 
+        # 4. 각도 연속성 기반 1차 군집화 (Scan-order Jump Distance Clustering)
         clusters = []
-        curr_cluster = [(obs_x[0], obs_y[0])]
-        for i in range(1, len(obs_x)):
-            dist = math.hypot(obs_x[i] - obs_x[i - 1], obs_y[i] - obs_y[i - 1])
-            if dist < 0.28:
-                curr_cluster.append((obs_x[i], obs_y[i]))
+        curr_cluster = [(float(xm[0]), float(ym[0]))]
+        for i in range(1, len(xm)):
+            dist = math.hypot(xm[i] - xm[i - 1], ym[i] - ym[i - 1])
+            if dist < self.obs_point_jump:
+                curr_cluster.append((float(xm[i]), float(ym[i])))
             else:
-                if len(curr_cluster) >= 6:
+                if len(curr_cluster) >= self.obs_min_pts:
                     clusters.append(np.array(curr_cluster, dtype=np.float64))
-                curr_cluster = [(obs_x[i], obs_y[i])]
-        if len(curr_cluster) >= 6:
+                curr_cluster = [(float(xm[i]), float(ym[i]))]
+        if len(curr_cluster) >= self.obs_min_pts:
             clusters.append(np.array(curr_cluster, dtype=np.float64))
 
         if not clusters:
             return np.empty((0, 3), dtype=np.float64)
 
+        dt = self.planner.dt
+        orig_x, orig_y, orig_c, orig_s, height, width, resolution = self.planner.map_metainfo
+
+        # 5. 군집 레벨 필터링 (크기, 정적 맵 벽면/기둥 배제, 주행 통로 검사)
         detected = []
         for cluster in clusters:
+            # 5-1. 물리적 크기 검사 (대형 벽면 선분 제외)
             span = np.max(cluster, axis=0) - np.min(cluster, axis=0)
-            if math.hypot(span[0], span[1]) > 1.0:
+            span_diag = math.hypot(span[0], span[1])
+            if span_diag > self.obs_max_span:
+                continue
+
+            # 5-2. 정적 맵 벽면/기둥 근접성 검사
+            cl_dts = []
+            for px, py in cluster:
+                r, c = xy_2_rc(float(px), float(py), orig_x, orig_y, orig_c, orig_s, height, width, resolution)
+                if 0 <= r < height and 0 <= c < width:
+                    cl_dts.append(dt[r, c])
+                else:
+                    cl_dts.append(0.0)
+
+            if min(cl_dts) < self.obs_wall_min_dt or np.mean(cl_dts) < self.obs_wall_mean_dt:
                 continue
 
             cx = float(np.mean(cluster[:, 0]))
             cy = float(np.mean(cluster[:, 1]))
 
+            # 5-3. 주행 통로(Corridor) 검사
             _, nearest_dist, _, nearest_wp_idx = nearest_point(np.array([cx, cy]), self.planner.waypoints[:, :2])
-            if nearest_dist > 0.40:
+            if nearest_dist > self.obs_corridor_width:
                 continue
 
             theta = float(self.planner.waypoints[nearest_wp_idx, 3])
@@ -382,6 +425,7 @@ class LatticePlannerNode(Node):
         if not detected:
             return np.empty((0, 3), dtype=np.float64)
 
+        # 차량과의 거리가 가까운 순으로 최대 5개 전달
         detected = np.array(detected, dtype=np.float64)
         dists = np.hypot(detected[:, 0] - pose_x, detected[:, 1] - pose_y)
         sorted_idx = np.argsort(dists)

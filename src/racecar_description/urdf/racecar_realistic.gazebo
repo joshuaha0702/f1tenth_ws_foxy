@@ -1,0 +1,182 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <!-- 
+    ========================================================================
+    [Realistic Gazebo Physics & Sensor Simulation (Tuned from Real Rosbags)]
+    - 실차 Rosbag 실측 데이터 및 실차 고속 세팅 반영
+    - RPLIDAR A2M8: 1080 빔, 360° (-180°~+180°), 30.0 Hz, 0.05m~16.0m, 노이즈 2cm
+    - VESC / 구동계: 최대 조향각 0.26 rad (14.9°), 가속도 3.5~4.5 m/s², 타이어 슬립 ~10%
+    ========================================================================
+  -->
+  <xacro:macro name="racecar_gazebo_realistic" params="namespace visualize_lidar:=true">
+    <!-- Chassis physics -->
+    <gazebo reference="chassis">
+      <mu1 value="0.0"/>
+      <mu2 value="0.0"/>
+      <kp value="10000000.0" />
+      <kd value="1.0" />
+      <minDepth>0.001</minDepth>
+      <material>Gazebo/Blue</material>
+      <sensor name="chassis_contact_sensor" type="contact">
+        <always_on>true</always_on>
+        <update_rate>50</update_rate>
+        <contact>
+          <collision>base_link_fixed_joint_lump__chassis_collision_collision</collision>
+        </contact>
+        <plugin name="chassis_bumper" filename="libgazebo_ros_bumper.so">
+          <ros>
+            <namespace>${namespace}</namespace>
+            <remapping>bumper_states:=chassis_bumper_states</remapping>
+          </ros>
+          <frame_name>${namespace}/base_link</frame_name>
+        </plugin>
+      </sensor>
+    </gazebo>
+
+    <!-- Wheels physics (실측 휠 슬립 ~10% 재현: mu1=0.88, mu2=0.88) -->
+    <gazebo reference="left_rear_wheel">
+      <mu1 value="0.88"/>
+      <mu2 value="0.88"/>
+      <kp value="1000000.0"/>
+      <kd value="100.0"/>
+      <minDepth>0.001</minDepth>
+      <material>Gazebo/Black</material>
+    </gazebo>
+    <gazebo reference="right_rear_wheel">
+      <mu1 value="0.88"/>
+      <mu2 value="0.88"/>
+      <kp value="1000000.0"/>
+      <kd value="100.0"/>
+      <minDepth>0.001</minDepth>
+      <material>Gazebo/Black</material>
+    </gazebo>
+    <gazebo reference="left_front_wheel">
+      <mu1 value="0.88"/>
+      <mu2 value="0.88"/>
+      <kp value="1000000.0"/>
+      <kd value="100.0"/>
+      <minDepth>0.001</minDepth>
+      <material>Gazebo/Black</material>
+    </gazebo>
+    <gazebo reference="right_front_wheel">
+      <mu1 value="0.88"/>
+      <mu2 value="0.88"/>
+      <kp value="1000000.0"/>
+      <kd value="100.0"/>
+      <minDepth>0.001</minDepth>
+      <material>Gazebo/Black</material>
+    </gazebo>
+    <gazebo reference="rear_reflector"><material>Gazebo/Black</material></gazebo>
+
+    <!-- Ackermann Drive Plugin (실차 VESC 실측 가속도 3.5~4.5 m/s² 및 조향각 0.26 rad 반영) -->
+    <gazebo>
+      <plugin name="gazebo_ros_ackermann_drive" filename="libgazebo_ros_ackermann_drive.so">
+        <ros>
+          <namespace>${namespace}</namespace>
+          <remapping>cmd_vel:=drive_twist</remapping>
+          <remapping>odom:=odom</remapping>
+        </ros>
+        <update_rate>100.0</update_rate>
+        <front_left_joint>left_front_wheel_joint</front_left_joint>
+        <front_right_joint>right_front_wheel_joint</front_right_joint>
+        <rear_left_joint>left_rear_wheel_joint</rear_left_joint>
+        <rear_right_joint>right_rear_wheel_joint</rear_right_joint>
+        <left_steering_joint>left_steering_hinge_joint</left_steering_joint>
+        <right_steering_joint>right_steering_hinge_joint</right_steering_joint>
+        
+        <wheel_separation>0.22</wheel_separation>
+        <wheel_diameter>0.1</wheel_diameter>
+        <wheelbase>0.325</wheelbase>
+        <!-- 실차 VESC 가속도 제한(2.5~3.5 m/s²)을 재현하는 적정 휠 토크 -->
+        <max_wheel_torque>15.0</max_wheel_torque>
+        
+        <!-- 실차 최고 속도 및 실측 최대 조향각(0.260 rad = 14.9°) 한계 일치 -->
+        <max_speed>5.0</max_speed>
+        <max_steer>0.260</max_steer>
+        
+        <!-- 실측 서보 모터 조향 각속도 한계 -->
+        <max_steering_angle_velocity>3.2</max_steering_angle_velocity>
+
+        <!-- 
+          실차 거동 모사를 위한 PID 게인:
+          - linear_velocity: P=0.85로 낮춰 급발진 없이 묵직하고 현실적인 가속 반응 구현 (VESC interpolator 모사)
+          - steering: P=1.8, D=0.08로 조향 시 약 30~50ms의 물리적 서보 응답 딜레이(Rise time) 및 안정성 부여
+        -->
+        <linear_velocity_pid_gain>0.85 0.01 0.04</linear_velocity_pid_gain>
+        <left_steering_pid_gain>1.8 0.01 0.08</left_steering_pid_gain>
+        <right_steering_pid_gain>1.8 0.01 0.08</right_steering_pid_gain>
+        
+        <max_wheel_steering_angle>0.260</max_wheel_steering_angle>
+        <publish_odom>true</publish_odom>
+        <publish_odom_tf>true</publish_odom_tf>
+        <publish_wheel_tf>false</publish_wheel_tf>
+        
+        <!-- namespace split -->
+        <odometry_frame>${namespace}/odom</odometry_frame>
+        <robot_base_frame>${namespace}/base_link</robot_base_frame>
+      </plugin>
+    </gazebo>
+
+    <!-- Joint State Publisher Plugin -->
+    <gazebo>
+      <plugin name="gazebo_ros_joint_state_publisher" filename="libgazebo_ros_joint_state_publisher.so">
+        <ros>
+          <namespace>${namespace}</namespace>
+          <remapping>joint_states:=joint_states_gz</remapping>
+        </ros>
+        <update_rate>30</update_rate>
+        <joint_name>left_rear_wheel_joint</joint_name>
+        <joint_name>right_rear_wheel_joint</joint_name>
+        <joint_name>left_front_wheel_joint</joint_name>
+        <joint_name>right_front_wheel_joint</joint_name>
+        <joint_name>left_steering_hinge_joint</joint_name>
+        <joint_name>right_steering_hinge_joint</joint_name>
+      </plugin>
+    </gazebo>
+
+    <!-- 
+      Laser Scanner Plugin: 실차 라키빔(Lakibeam-1) TOF LiDAR 30Hz 스펙 일치
+      - 라이다 모델        : Richbeam Lakibeam-1 (Time-of-Flight 방식)
+      - 샘플 수(Beams)     : 1080 개
+      - 각도 범위          : 360° 전체 (-3.14159 ~ +3.14159 rad)
+      - 스캔 주파수        : 30.0 Hz (Lakibeam 30Hz 고속 세팅 반영, 약 33ms 주기)
+      - 측정 거리 한계     : 0.05m ~ 25.0m (Lakibeam TOF 측정 범위)
+      - 정밀도 노이즈      : TOF 특성 반영 Gaussian Noise (stddev: 0.01m = 1cm 고정밀 노이즈)
+    -->
+    <gazebo reference="laser">
+      <sensor type="ray" name="lakibeam1_sensor">
+        <visualize>${visualize_lidar}</visualize>
+        <update_rate>30.0</update_rate>
+        <ray>
+          <scan>
+            <horizontal>
+              <samples>1080</samples>
+              <resolution>1</resolution>
+              <min_angle>-3.14159265</min_angle> <!-- -180도 -->
+              <max_angle>3.14159265</max_angle>   <!-- +180도 (360도 전체 스캔) -->
+            </horizontal>
+          </scan>
+          <range>
+            <min>0.05</min>
+            <max>25.0</max>
+            <resolution>0.005</resolution>
+          </range>
+          <noise>
+            <type>gaussian</type>
+            <mean>0.0</mean>
+            <stddev>0.01</stddev> <!-- Lakibeam-1 TOF 1.0cm 고정밀 노이즈 -->
+          </noise>
+        </ray>
+        <plugin name="gazebo_ros_lakibeam_controller" filename="libgazebo_ros_ray_sensor.so">
+          <ros>
+            <namespace>${namespace}</namespace>
+            <remapping>~/out:=scan</remapping>
+          </ros>
+          <output_type>sensor_msgs/LaserScan</output_type>
+          <frame_name>${namespace}/laser</frame_name>
+        </plugin>
+      </sensor>
+    </gazebo>
+
+  </xacro:macro>
+</robot>

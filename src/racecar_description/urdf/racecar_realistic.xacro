@@ -1,0 +1,138 @@
+<?xml version="1.0"?>
+<robot name="racecar_realistic" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:include filename="$(find racecar_description)/urdf/macros.xacro" />
+  <xacro:include filename="$(find racecar_description)/urdf/racecar_realistic.gazebo" />
+  <xacro:arg name="namespace" default="" />
+  <xacro:arg name="color" default="blue" />
+  <xacro:arg name="visualize_lidar" default="true" />
+  <xacro:property name="chassis_color" value="$(arg color)" />
+
+  <xacro:racecar_gazebo_realistic namespace="$(arg namespace)" visualize_lidar="$(arg visualize_lidar)" />
+
+  <!-- 1. 기본 링크 설정 -->
+  <link name="base_link" />
+
+  <link name="chassis">
+    <visual><xacro:chassis_geometry/><material name="${chassis_color}" /></visual>
+    <collision name="chassis_collision">
+      <origin xyz="0.16 0 0.01" rpy="0 0 0"/>
+      <geometry><box size="0.55 0.28 0.05"/></geometry>
+    </collision>
+    <visual name="chassis_collision_visual">
+      <origin xyz="0.16 0 0.01" rpy="0 0 0"/>
+      <geometry><box size="0.55 0.28 0.05"/></geometry>
+      <material name="collision_box_debug">
+        <color rgba="1.0 0.2 0.2 0.35"/>
+      </material>
+    </visual>
+    <inertial><xacro:chassis_inertial_params /></inertial>
+  </link>
+
+  <joint name="base_link_joint" type="fixed">
+    <origin xyz="0 0 0.05" rpy="0 0 0" /><parent link="base_link" /><child link="chassis" />
+  </joint>
+
+  <!-- 2. 뒷바퀴 설정 (구동축) -->
+  <link name="left_rear_wheel">
+    <inertial><xacro:left_wheels_inertial_params /></inertial>
+    <visual><xacro:left_rear_wheel_geometry /><material name="black" /></visual>
+    <collision><xacro:left_wheels_collision_geometry /></collision>
+  </link>
+
+  <joint name="left_rear_wheel_joint" type="continuous">
+    <origin xyz="0 0.1 0" rpy="1.5708 0 0" /><parent link="chassis" /><child link="left_rear_wheel" />
+    <axis xyz="0 0 -1" /><limit effort="10" velocity="439" />
+  </joint>
+
+  <link name="right_rear_wheel">
+    <inertial><xacro:right_wheels_inertial_params /></inertial>
+    <visual><xacro:right_rear_wheel_geometry /><material name="black" /></visual>
+    <collision><xacro:right_wheels_collision_geometry /></collision>
+  </link>
+
+  <joint name="right_rear_wheel_joint" type="continuous">
+    <origin xyz="0 -0.1 0" rpy="1.5708 0 0" /><parent link="chassis" /><child link="right_rear_wheel" />
+    <axis xyz="0 0 -1" /><limit effort="10" velocity="439" />
+  </joint>
+
+  <!-- 3. 앞바퀴 및 조향 링크 설정 -->
+  <link name="left_steering_hinge">
+    <inertial><xacro:steering_hinge_inertial_params /></inertial>
+    <visual><xacro:left_steering_hinge_geometry /><material name="grey" /></visual>
+  </link>
+
+  <joint name="left_steering_hinge_joint" type="revolute">
+    <origin xyz="0.325 0.1 0" rpy="0 1.5708 0" /><parent link="chassis" /><child link="left_steering_hinge" />
+    <axis xyz="-1 0 0" /><limit lower="-0.260" upper="0.260" effort="10" velocity="3.2" />
+  </joint>
+
+  <link name="right_steering_hinge">
+    <inertial><xacro:steering_hinge_inertial_params /></inertial>
+    <visual><xacro:right_steering_hinge_geometry /><material name="grey" /></visual>
+  </link>
+
+  <joint name="right_steering_hinge_joint" type="revolute">
+    <origin xyz="0.325 -0.1 0" rpy="0 1.5708 0" /><parent link="chassis" /><child link="right_steering_hinge" />
+    <axis xyz="-1 0 0" /><limit lower="-0.260" upper="0.260" effort="10" velocity="3.2" />
+  </joint>
+
+  <link name="left_front_wheel">
+    <inertial><xacro:left_wheels_inertial_params /></inertial>
+    <visual><xacro:left_front_wheel_geometry /><material name="black" /></visual>
+    <collision><xacro:left_wheels_collision_geometry /></collision>
+  </link>
+
+  <joint name="left_front_wheel_joint" type="continuous">
+    <origin xyz="0 0 0" rpy="1.5708 0 0" /><parent link="left_steering_hinge" /><child link="left_front_wheel" />
+    <axis xyz="0 0 -1" /><limit effort="10" velocity="439" />
+  </joint>
+
+  <link name="right_front_wheel">
+    <inertial><xacro:right_wheels_inertial_params /></inertial>
+    <visual><xacro:right_front_wheel_geometry /><material name="black" /></visual>
+    <collision><xacro:right_wheels_collision_geometry /></collision>
+  </link>
+
+  <joint name="right_front_wheel_joint" type="continuous">
+    <origin xyz="0 0 0" rpy="1.5708 0 0" /><parent link="right_steering_hinge" /><child link="right_front_wheel" />
+    <axis xyz="0 0 -1" /><limit effort="10" velocity="439" />
+  </joint>
+
+  <!-- 4. 라이다 센서 설정 (실차 장착 위치: x=0.27m 전방) -->
+  <link name="laser">
+    <inertial><xacro:hokuyo_inertial_params /></inertial>
+    <collision><origin xyz="0 0 0" rpy="0 0 0"/><geometry><box size="0.1 0.1 0.1"/></geometry></collision>
+    <visual><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="file://$(find racecar_description)/meshes/hokuyo.dae"/></geometry><material name="grey" /></visual>
+  </link>
+
+  <joint name="hokuyo_joint" type="fixed">
+    <origin xyz="0.27 0.0 0.11" rpy="0 0 0" /><parent link="chassis" /><child link="laser" />
+    <axis xyz="0 0 1" />
+  </joint>
+
+  <!-- 5. 후방 반사판 -->
+  <link name="rear_reflector">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry><cylinder radius="0.04" length="0.08" /></geometry>
+      <material name="black" />
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry><cylinder radius="0.04" length="0.08" /></geometry>
+    </collision>
+    <inertial>
+      <mass value="0.05" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <inertia ixx="0.0001" ixy="0" ixz="0" iyy="0.0001" iyz="0" izz="0.0001" />
+    </inertial>
+  </link>
+
+  <joint name="rear_reflector_joint" type="fixed">
+    <origin xyz="-0.10 0 0.10" rpy="0 0 0" />
+    <parent link="chassis" />
+    <child link="rear_reflector" />
+  </joint>
+
+</robot>

@@ -68,6 +68,18 @@ class SlamLatticePlannerNode(Node):
         self.declare_parameter('enable_overtake', False)
         self.declare_parameter('opponent_weight', -1.0)
 
+        # 장애물 감지 및 필터링 튜닝 파라미터
+        self.declare_parameter('obs_min_range', 0.15)
+        self.declare_parameter('obs_max_range', 3.5)
+        self.declare_parameter('obs_wall_min_dt', 0.28)
+        self.declare_parameter('obs_wall_mean_dt', 0.35)
+        self.declare_parameter('obs_point_jump', 0.20)
+        self.declare_parameter('obs_min_pts', 4)
+        self.declare_parameter('obs_max_span', 0.75)
+        self.declare_parameter('obs_corridor_width', 0.75)
+        self.declare_parameter('obs_tracker_min_hits', 3)
+        self.declare_parameter('obs_tracker_max_misses', 12)
+
         config_path = self.get_parameter('config_path').value
         raceline_path = self.get_parameter('raceline_path').value
         raw_map_path = self.get_parameter('map_path').value
@@ -157,12 +169,25 @@ class SlamLatticePlannerNode(Node):
         self.last_raw_odom_y = 0.0
         self.last_raw_odom_yaw = 0.0
 
+        # 장애물 감지 튜닝 파라미터 로드
+        self.obs_min_range = float(self.get_parameter('obs_min_range').value)
+        self.obs_max_range = float(self.get_parameter('obs_max_range').value)
+        self.obs_wall_min_dt = float(self.get_parameter('obs_wall_min_dt').value)
+        self.obs_wall_mean_dt = float(self.get_parameter('obs_wall_mean_dt').value)
+        self.obs_point_jump = float(self.get_parameter('obs_point_jump').value)
+        self.obs_min_pts = int(self.get_parameter('obs_min_pts').value)
+        self.obs_max_span = float(self.get_parameter('obs_max_span').value)
+        self.obs_corridor_width = float(self.get_parameter('obs_corridor_width').value)
+        self.obs_tracker_min_hits = int(self.get_parameter('obs_tracker_min_hits').value)
+        self.obs_tracker_max_misses = int(self.get_parameter('obs_tracker_max_misses').value)
+
         self.opp_pose = np.empty((0, 3))
         self.opp_vels = np.empty((0, 2))
+        self.last_opp_odom_time = None
         self.obstacle_tracker = MultiObstacleTracker(
             max_match_dist=1.2,
-            min_hits_to_confirm=3,
-            max_misses_to_delete=3
+            min_hits_to_confirm=self.obs_tracker_min_hits,
+            max_misses_to_delete=self.obs_tracker_max_misses
         )
         self._last_plan_time = None
         self.best_traj = None
@@ -272,6 +297,13 @@ class SlamLatticePlannerNode(Node):
         if self.overtake_mode != 'odom':
             return
 
+        if msg.header.frame_id and msg.header.frame_id != 'map':
+            self.get_logger().warn(
+                f"Opponent odom frame_id is '{msg.header.frame_id}' (not 'map')! "
+                f"Planner requires opponent poses in 'map' coordinates.",
+                throttle_duration_sec=5.0
+            )
+
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
         q = msg.pose.pose.orientation
@@ -282,6 +314,7 @@ class SlamLatticePlannerNode(Node):
 
         self.opp_pose = np.array([[x, y, theta]], dtype=np.float64)
         self.opp_vels = np.array([[vx, vy]], dtype=np.float64)
+        self.last_opp_odom_time = self.get_clock().now()
 
         tracked_info = [{
             'id': 1,
@@ -323,11 +356,11 @@ class SlamLatticePlannerNode(Node):
 
         angles = msg.angle_min + np.arange(n, dtype=np.float32) * msg.angle_increment
 
-        # 1. 거리 및 각도 필터링: 전방 [-1.9 rad, +1.9 rad], 유효 거리 [0.35m, 5.0m] (원거리 조기 회피)
+        # 1. 거리 및 각도 필터링: 전방 [-1.9 rad, +1.9 rad], 유효 거리 [obs_min_range, obs_max_range]
         valid_mask = (
             np.isfinite(ranges) &
-            (ranges >= max(float(msg.range_min), 0.35)) &
-            (ranges <= min(float(msg.range_max), 5.0)) &
+            (ranges >= max(float(msg.range_min), self.obs_min_range)) &
+            (ranges <= min(float(msg.range_max), self.obs_max_range)) &
             (np.abs(angles) <= 1.9)
         )
         if not np.any(valid_mask):
@@ -340,8 +373,8 @@ class SlamLatticePlannerNode(Node):
         xb = v_ranges * np.cos(v_angles) + 0.27
         yb = v_ranges * np.sin(v_angles)
 
-        # 차량 후방 제외
-        fwd_mask = xb > 0.1
+        # 차량 후방 제외 (범퍼 앞쪽 5cm부터 허용)
+        fwd_mask = xb > 0.05
         if not np.any(fwd_mask):
             return np.empty((0, 3), dtype=np.float64)
 
@@ -354,57 +387,60 @@ class SlamLatticePlannerNode(Node):
         xm = self.pose_x + (cos_t * xb - sin_t * yb)
         ym = self.pose_y + (sin_t * xb + cos_t * yb)
 
-        # 4. 정적 맵 벽면 필터링 (Static Map Wall Filter)
-        # 벽면과 0.22m 이내인 점은 맵의 정적 벽면으로 간주하여 제거 (센서 노이즈/위치오차 마진 확보)
-        dt = self.planner.dt
-        orig_x, orig_y, orig_c, orig_s, height, width, resolution = self.planner.map_metainfo
-
-        obs_x = []
-        obs_y = []
-        for x, y in zip(xm, ym):
-            r, c = xy_2_rc(float(x), float(y), orig_x, orig_y, orig_c, orig_s, height, width, resolution)
-            if 0 <= r < height and 0 <= c < width:
-                if dt[r, c] > 0.22:
-                    obs_x.append(float(x))
-                    obs_y.append(float(y))
-
-        if len(obs_x) < 6:
+        if len(xm) < self.obs_min_pts:
             return np.empty((0, 3), dtype=np.float64)
 
-        # 5. 유클리디안 거리 기반 군집화 (Clustering)
+        # 4. 각도 연속성 기반 1차 군집화 (Scan-order Jump Distance Clustering)
+        # 개별 점을 먼저 잘라내면 긴 벽면이 작은 조각으로 파편화되어 오탐이 발생하므로,
+        # 연속된 물리적 선분을 먼저 묶은 뒤 군집 전체의 특성(크기, 벽면 거리)을 평가합니다.
         clusters = []
-        curr_cluster = [(obs_x[0], obs_y[0])]
-        for i in range(1, len(obs_x)):
-            dist = math.hypot(obs_x[i] - obs_x[i - 1], obs_y[i] - obs_y[i - 1])
-            if dist < 0.28:
-                curr_cluster.append((obs_x[i], obs_y[i]))
+        curr_cluster = [(float(xm[0]), float(ym[0]))]
+        for i in range(1, len(xm)):
+            dist = math.hypot(xm[i] - xm[i - 1], ym[i] - ym[i - 1])
+            if dist < self.obs_point_jump:
+                curr_cluster.append((float(xm[i]), float(ym[i])))
             else:
-                if len(curr_cluster) >= 6:
+                if len(curr_cluster) >= self.obs_min_pts:
                     clusters.append(np.array(curr_cluster, dtype=np.float64))
-                curr_cluster = [(obs_x[i], obs_y[i])]
-        if len(curr_cluster) >= 6:
+                curr_cluster = [(float(xm[i]), float(ym[i]))]
+        if len(curr_cluster) >= self.obs_min_pts:
             clusters.append(np.array(curr_cluster, dtype=np.float64))
 
         if not clusters:
             return np.empty((0, 3), dtype=np.float64)
 
-        # 6. 클러스터별 중심점(Centroid) 및 헤딩 추정 + 주행 통로(Corridor) 필터
+        dt = self.planner.dt
+        orig_x, orig_y, orig_c, orig_s, height, width, resolution = self.planner.map_metainfo
+
+        # 5. 군집 레벨 필터링 (크기, 정적 맵 벽면/기둥 배제, 주행 통로 검사)
         detected = []
         for cluster in clusters:
+            # 5-1. 물리적 크기 검사 (0.75m 초과 대형 선분은 벽면으로 간주하여 제외)
             span = np.max(cluster, axis=0) - np.min(cluster, axis=0)
-            if math.hypot(span[0], span[1]) > 1.0:
-                # 1.0m 초과의 너무 큰 군집은 벽면 오검출일 수 있으므로 제외
+            span_diag = math.hypot(span[0], span[1])
+            if span_diag > self.obs_max_span:
+                continue
+
+            # 5-2. 정적 맵 벽면/기둥 근접성 검사 (Wall Proximity Check)
+            # 군집 내 점들의 맵 거리 변환(dt)을 계산하여 벽면/기둥 파편 오탐 차단
+            cl_dts = []
+            for px, py in cluster:
+                r, c = xy_2_rc(float(px), float(py), orig_x, orig_y, orig_c, orig_s, height, width, resolution)
+                if 0 <= r < height and 0 <= c < width:
+                    cl_dts.append(dt[r, c])
+                else:
+                    cl_dts.append(0.0)
+
+            # 군집의 점이 벽면에 너무 가깝거나(min_dt), 평균 벽면 여유가 부족하면 정적 구조물로 판정
+            if min(cl_dts) < self.obs_wall_min_dt or np.mean(cl_dts) < self.obs_wall_mean_dt:
                 continue
 
             cx = float(np.mean(cluster[:, 0]))
             cy = float(np.mean(cluster[:, 1]))
 
-            # 가장 가까운 웨이포인트(주행 중심선)와의 거리 검사 (주행 통로 외곽 필터)
+            # 5-3. 주행 통로(Corridor) 검사
             _, nearest_dist, _, nearest_wp_idx = nearest_point(np.array([cx, cy]), self.planner.waypoints[:, :2])
-            
-            # 주행 레이스라인 기준 좌우 0.40m 이내에 있는 장애물만 실제 회피 대상으로 인정
-            # (벽면에 붙은 외곽 허위 장애물 원천 차단)
-            if nearest_dist > 0.40:
+            if nearest_dist > self.obs_corridor_width:
                 continue
 
             theta = float(self.planner.waypoints[nearest_wp_idx, 3])
@@ -632,6 +668,13 @@ class SlamLatticePlannerNode(Node):
         if self._last_plan_time is not None:
             dt = (now_time - self._last_plan_time).nanoseconds * 1e-9
         self._last_plan_time = now_time
+
+        # ODOM 모드인 경우 상대 차량 수신 타임아웃 검사 (0.5초 이상 미수신 시 유령 장애물 방지를 위해 클리어)
+        if self.overtake_mode == 'odom' and len(self.opp_pose) > 0:
+            if self.last_opp_odom_time is None or (now_time - self.last_opp_odom_time).nanoseconds * 1e-9 > 0.5:
+                self.opp_pose = np.empty((0, 3), dtype=np.float64)
+                self.opp_vels = np.empty((0, 2), dtype=np.float64)
+                self._publish_obstacle_markers([])
 
         try:
             best_traj, best_cost, traj_cost, abs_v_cost, collision_cost = self.planner.plan(
