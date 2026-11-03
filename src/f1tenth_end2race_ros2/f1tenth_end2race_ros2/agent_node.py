@@ -9,6 +9,7 @@ import os
 import time
 import gc
 import threading
+from collections import deque
 from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import Odometry
 from std_msgs.msg import String, Float64MultiArray, MultiArrayDimension
@@ -45,6 +46,12 @@ class End2RaceAgent(Node):
         self.declare_parameter('inference_decimate', 1)
         # 조향 출력 1차 저역통과 시정수 [s]. 0 = 끔. 보간 후 최종 조향에 적용 (LiDAR 전용 모델의 직선 지터 완화용)
         self.declare_parameter('control.steer_lpf_tau', 0.0)
+        # 시뮬 전용 실차 재현 파라미터 (0 = 끔). 11/01 실차 bag 에서 측정한 차이를 Gazebo 에 주입해
+        # p08 진동의 원인을 가르기 위한 것. 지연은 메시지 stamp(sim time) 기준.
+        self.declare_parameter('sim.actuation_delay', 0.0)  # drive 명령 발행 지연 [s] (실차 명령→회전 +~0.11)
+        self.declare_parameter('sim.scan_delay', 0.0)       # 추론에 이만큼 오래된 scan 사용 [s] (실차 p08 ~0.1)
+        self.declare_parameter('sim.speed_floor', 0.0)      # 0 < 속도 < floor 이면 floor 로 발행 (실차 저속 고정 ~0.66)
+        self.declare_parameter('sim.steer_sat', 0.0)        # 발행 조향 = S*tanh(δ/S) (실차 큰 조향 포화 ~0.34)
 
         # 'timer': wall clock (실차 기본). 'odom': odom 메시지마다 한 스텝 추론해
         # 학습 데이터와 같은 시뮬레이션 시간으로 동작하고 drive stamp = odom stamp.
@@ -82,6 +89,18 @@ class End2RaceAgent(Node):
             self.model_rate_hz = 100.0 / inference_decimate
         self.steer_lpf_tau = float(self.get_parameter('control.steer_lpf_tau').value)
         self._steer_filt = None
+        self.sim_actuation_delay = float(self.get_parameter('sim.actuation_delay').value)
+        self.sim_scan_delay = float(self.get_parameter('sim.scan_delay').value)
+        self.sim_speed_floor = float(self.get_parameter('sim.speed_floor').value)
+        self.sim_steer_sat = float(self.get_parameter('sim.steer_sat').value)
+        self._scan_hist = deque(maxlen=200)  # (stamp [s], ranges) — sim.scan_delay 용
+        self._act_hist = deque()             # (stamp [s], steer, speed) — sim.actuation_delay 용
+        if (self.sim_actuation_delay > 0.0 or self.sim_scan_delay > 0.0 or self.sim_speed_floor > 0.0
+                or self.sim_steer_sat > 0.0):
+            self.get_logger().warn(
+                f"[{self.robot_name}] [sim 재현] actuation_delay={self.sim_actuation_delay:.3f}s, "
+                f"scan_delay={self.sim_scan_delay:.3f}s, speed_floor={self.sim_speed_floor:.2f} m/s, "
+                f"steer_sat={self.sim_steer_sat:.2f} rad")
         self.interp_mode = str(self.get_parameter('interp_mode').value).lower()
         if self.interp_mode not in ('linear', 'zoh'):
             raise RuntimeError(f"[{self.robot_name}] interp_mode은 'linear' 또는 'zoh'여야 합니다: {self.interp_mode}")
@@ -339,6 +358,8 @@ class End2RaceAgent(Node):
         self.interp_step = 0
         self.measured_speed = 0.0
         self._steer_filt = None
+        self._scan_hist.clear()
+        self._act_hist.clear()
 
     def _watchdog_callback(self):
         if not self.publishing_enabled:
@@ -410,6 +431,8 @@ class End2RaceAgent(Node):
         self.latest_scan_stamp = msg.header.stamp
         self.latest_scan_id += 1
         self._diag_p1 = time.perf_counter()   # 추론에 쓸 수 있게 된 시점 (진단용)
+        if self.sim_scan_delay > 0.0:
+            self._scan_hist.append((msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9, out))
         self._scan_count += 1
         if self._scan_count == 1:
             self.get_logger().info(f"[{self.robot_name}] 첫 scan 수신 ({len(msg.ranges)} beams)")
@@ -500,6 +523,19 @@ class End2RaceAgent(Node):
         if self.latest_ranges is None or not self.publishing_enabled:
             return
 
+        if stamp is None:
+            stamp = self.get_clock().now().to_msg()
+        now_s = stamp.sec + stamp.nanosec * 1e-9
+        scan_in = self.latest_ranges
+        if self.sim_scan_delay > 0.0:
+            scan_in = None
+            for t, r in reversed(self._scan_hist):
+                if t <= now_s - self.sim_scan_delay:
+                    scan_in = r
+                    break
+            if scan_in is None:
+                return
+
         ticks_per_inference = max(1, int(round(self.drive_rate_hz / self.model_rate_hz)))
 
         # 모델 추론 시점 (예: 100Hz 제어 루프에서 ticks_per_inference 회마다 1번 추론)
@@ -520,14 +556,14 @@ class End2RaceAgent(Node):
             try:
                 if self.is_norm_model:
                     actions, self.hidden_state = self.model.inference_step(
-                        lidar_data=self.latest_ranges,
+                        lidar_data=scan_in,
                         current_speed=speed_in,
                         prev_hidden=self.hidden_state,
                         unnormalize=True
                     )
                 else:
                     actions, self.hidden_state = self.model.inference_step(
-                        lidar_data=self.latest_ranges,
+                        lidar_data=scan_in,
                         current_speed=speed_in,
                         prev_hidden=self.hidden_state
                     )
@@ -590,10 +626,23 @@ class End2RaceAgent(Node):
             self._steer_filt = steer_out if self._steer_filt is None else self._steer_filt + a * (steer_out - self._steer_filt)
             steer_out = self._steer_filt
 
+        steer_pub = float(np.clip(steer_out, self.min_steer, self.max_steer))
+        speed_pub = float(speed_out)
+        if self.sim_speed_floor > 0.0 and 0.01 < speed_pub < self.sim_speed_floor:
+            speed_pub = self.sim_speed_floor
+        if self.sim_steer_sat > 0.0:
+            steer_pub = float(self.sim_steer_sat * np.tanh(steer_pub / self.sim_steer_sat))
+        if self.sim_actuation_delay > 0.0:
+            self._act_hist.append((now_s, steer_pub, speed_pub))
+            while len(self._act_hist) > 1 and self._act_hist[1][0] <= now_s - self.sim_actuation_delay:
+                self._act_hist.popleft()
+            t, steer_d, speed_d = self._act_hist[0]
+            steer_pub, speed_pub = (steer_d, speed_d) if t <= now_s - self.sim_actuation_delay else (0.0, 0.0)
+
         drive_msg = AckermannDriveStamped()
-        drive_msg.header.stamp = stamp if stamp is not None else self.get_clock().now().to_msg()
-        drive_msg.drive.steering_angle = float(np.clip(steer_out, self.min_steer, self.max_steer))
-        drive_msg.drive.speed = float(speed_out)
+        drive_msg.header.stamp = stamp
+        drive_msg.drive.steering_angle = steer_pub
+        drive_msg.drive.speed = speed_pub
         self.drive_pub.publish(drive_msg)
         self._last_drive_wall = time.monotonic()
 
