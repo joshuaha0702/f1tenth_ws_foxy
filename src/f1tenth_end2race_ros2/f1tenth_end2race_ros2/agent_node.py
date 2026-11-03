@@ -174,7 +174,8 @@ class End2RaceAgent(Node):
         self._slow_inference_logged = False
         self._watchdog_period = 5.0
 
-        # 4. ROS 2 Pub/Sub — ReentrantCallbackGroup으로 scan/drive 병렬 실행
+        # 4. ROS 2 Pub/Sub — scan / drive 콜백을 각자 MutuallyExclusive 그룹에 둔다.
+        #    두 그룹끼리는 병렬 실행되고, drive 콜백끼리는 겹치지 않아 hidden_state 를 동시에 읽고 쓰지 않는다.
         prefix = f'/{self.robot_name.strip("/")}' if self.robot_name and self.robot_name.strip("/") else ''
         scan_topic = f'{prefix}/scan'
         drive_topic = f'{prefix}/drive'
@@ -182,8 +183,10 @@ class End2RaceAgent(Node):
                                f"speed_input='{self.speed_input}'")
 
         cb_group = ReentrantCallbackGroup()
+        scan_group = MutuallyExclusiveCallbackGroup()
+        drive_group = MutuallyExclusiveCallbackGroup()
         # 큐 깊이 1: 처리가 밀려도 쌓인 옛 scan 을 차례로 소비하지 않고 항상 최신 scan 만 쓴다.
-        self.scan_sub = self.create_subscription(LaserScan, scan_topic, self.scan_callback, 1, callback_group=cb_group)
+        self.scan_sub = self.create_subscription(LaserScan, scan_topic, self.scan_callback, 1, callback_group=scan_group)
         self.drive_pub = self.create_publisher(AckermannDriveStamped, drive_topic, 10)
         self.preprocess_scan_pub = self.create_publisher(LaserScan, f'{prefix}/preprocess_scan', 10)
 
@@ -207,7 +210,7 @@ class End2RaceAgent(Node):
                                          callback_group=cb_group)
             # wall clock 기준 drive_rate_hz (기본 100Hz) 주기로 발화하여 보간된 제어 명령 발행
             wall_clock = Clock(clock_type=ClockType.STEADY_TIME)
-            self.drive_timer = self.create_timer(1.0 / self.drive_rate_hz, self.drive_callback, clock=wall_clock, callback_group=cb_group)
+            self.drive_timer = self.create_timer(1.0 / self.drive_rate_hz, self.drive_callback, clock=wall_clock, callback_group=drive_group)
 
         # 5. 진단 watchdog
         self._watchdog_group = ReentrantCallbackGroup()
