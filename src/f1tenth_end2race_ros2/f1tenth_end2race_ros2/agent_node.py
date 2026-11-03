@@ -182,7 +182,8 @@ class End2RaceAgent(Node):
                                f"speed_input='{self.speed_input}'")
 
         cb_group = ReentrantCallbackGroup()
-        self.scan_sub = self.create_subscription(LaserScan, scan_topic, self.scan_callback, 10, callback_group=cb_group)
+        # 큐 깊이 1: 처리가 밀려도 쌓인 옛 scan 을 차례로 소비하지 않고 항상 최신 scan 만 쓴다.
+        self.scan_sub = self.create_subscription(LaserScan, scan_topic, self.scan_callback, 1, callback_group=cb_group)
         self.drive_pub = self.create_publisher(AckermannDriveStamped, drive_topic, 10)
         self.preprocess_scan_pub = self.create_publisher(LaserScan, f'{prefix}/preprocess_scan', 10)
 
