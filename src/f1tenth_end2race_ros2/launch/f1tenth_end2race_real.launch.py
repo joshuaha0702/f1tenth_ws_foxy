@@ -72,6 +72,8 @@ def generate_launch_description():
             'control': {'steer_lpf_tau': ParameterValue(LaunchConfiguration('steer_lpf_tau'), value_type=float)},
             'use_norm': use_norm,
             'model_rate_hz': ParameterValue(LaunchConfiguration('model_rate_hz'), value_type=float),
+            # 전처리 scan 은 RViz 확인용이라 RViz 를 띄울 때만 발행 (추론에는 쓰이지 않음)
+            'publish_preprocess_scan': ParameterValue(use_rviz, value_type=bool),
         }],
         remappings=[
             (['/', namespace, '/scan'], '/scan'),

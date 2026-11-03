@@ -51,6 +51,8 @@ class End2RaceAgent(Node):
         # twist.linear.x 측정 속도 (train.py --speed_input odom으로 학습한 모델용),
         # 'hybrid' = [odom 측정 속도, 직전 출력 속도 명령] 2채널 (train.py --speed_input hybrid).
         self.declare_parameter('speed_input', 'command')
+        # 전처리(360 bin) scan 을 RViz 확인용으로 발행할지. 추론에는 쓰이지 않는다 (실차 launch 는 use_rviz 에 연동).
+        self.declare_parameter('publish_preprocess_scan', True)
 
         self.robot_name = self.get_parameter('robot_name').value
         self.model_path = self.get_parameter('model_path').value
@@ -84,6 +86,7 @@ class End2RaceAgent(Node):
             raise RuntimeError(f"[{self.robot_name}] speed_input은 'command', 'odom', 'hybrid', 'none' 중 "
                                f"하나여야 합니다: {self.speed_input}")
         self.uses_odom = self.speed_input in ('odom', 'hybrid')
+        self.publish_preprocess_scan = bool(self.get_parameter('publish_preprocess_scan').value)
         
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.num_features = 360 # model.num_features와 일치
@@ -188,7 +191,8 @@ class End2RaceAgent(Node):
         # 큐 깊이 1: 처리가 밀려도 쌓인 옛 scan 을 차례로 소비하지 않고 항상 최신 scan 만 쓴다.
         self.scan_sub = self.create_subscription(LaserScan, scan_topic, self.scan_callback, 1, callback_group=scan_group)
         self.drive_pub = self.create_publisher(AckermannDriveStamped, drive_topic, 10)
-        self.preprocess_scan_pub = self.create_publisher(LaserScan, f'{prefix}/preprocess_scan', 10)
+        self.preprocess_scan_pub = (self.create_publisher(LaserScan, f'{prefix}/preprocess_scan', 10)
+                                    if self.publish_preprocess_scan else None)
 
         # EpisodeManager의 /episode/control(START/STOP)을 따라 일시정지하고,
         # STOP마다 GRU hidden state와 이전 속도를 초기화해 에피소드를 독립적으로 만든다.
@@ -281,7 +285,9 @@ class End2RaceAgent(Node):
         if self._scan_count == 1:
             self.get_logger().info(f"[{self.robot_name}] 첫 scan 수신 ({len(msg.ranges)} beams)")
 
-        # 전처리 결과 RViz 시각화용 LaserScan 발행 (360 bins)
+        # 전처리 결과 RViz 시각화용 LaserScan 발행 (360 bins). 추론에는 쓰이지 않는다.
+        if self.preprocess_scan_pub is None:
+            return
         pre_msg = LaserScan()
         pre_msg.header = msg.header
         pre_msg.angle_min = float(self.fov_min)
