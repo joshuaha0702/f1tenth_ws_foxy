@@ -21,7 +21,7 @@ class End2RaceAgent(Node):
         # 1. 파라미터 선언
         self.declare_parameter('robot_name', 'car1')
         self.declare_parameter('model_path', '/home/f1tenth_ws_foxy/src/f1tenth_end2race_ros2/models/end2race.pth')
-        self.declare_parameter('hidden_scale', 4)
+        self.declare_parameter('hidden_scale', 4.0)
         self.declare_parameter('control.max_steer', 0.52)
         self.declare_parameter('control.min_steer', -0.52)
         self.declare_parameter('control.max_speed', 2.0)

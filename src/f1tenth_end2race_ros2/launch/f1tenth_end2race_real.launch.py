@@ -47,6 +47,14 @@ def generate_launch_description():
         'model_rate_hz', default_value='10.0',
         description='모델 추론 주기 Hz (100Hz 학습 모델=100.0, ds30=30.0, ds10=10.0, 기본값: 10.0)'
     )
+    interp_mode_arg = DeclareLaunchArgument(
+        'interp_mode', default_value='linear',
+        description='End2Race interpolation mode: linear or zoh'
+    )
+    interp_steps_arg = DeclareLaunchArgument(
+        'interp_steps', default_value='4',
+        description='End2Race linear interpolation ramp steps (기본 4)'
+    )
     use_rviz_arg = DeclareLaunchArgument(
         'use_rviz', default_value='false',
         description='원격 모니터링용 RViz2 실행 여부 (실차에선 보통 false, 개발 PC에서 볼 때 true)'
@@ -72,6 +80,8 @@ def generate_launch_description():
             'control': {'steer_lpf_tau': ParameterValue(LaunchConfiguration('steer_lpf_tau'), value_type=float)},
             'use_norm': use_norm,
             'model_rate_hz': ParameterValue(LaunchConfiguration('model_rate_hz'), value_type=float),
+            'interp_mode': LaunchConfiguration('interp_mode'),
+            'interp_steps': ParameterValue(LaunchConfiguration('interp_steps'), value_type=int),
         }],
         remappings=[
             (['/', namespace, '/scan'], '/scan'),
@@ -123,6 +133,8 @@ def generate_launch_description():
         steer_lpf_tau_arg,
         use_norm_arg,
         model_rate_hz_arg,
+        interp_mode_arg,
+        interp_steps_arg,
         use_rviz_arg,
         record_bag_arg,
         agent_node,

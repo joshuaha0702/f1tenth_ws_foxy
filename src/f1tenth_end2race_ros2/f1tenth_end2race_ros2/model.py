@@ -13,14 +13,15 @@ def speed_dims_from_state_dict(state_dict) -> int:
     return int(state_dict["speed_mlp.0.weight"].shape[1])
 
 
-def hidden_scale_from_state_dict(state_dict, processed_features: int = 420) -> int:
+def hidden_scale_from_state_dict(state_dict, processed_features: int = 420):
     """체크포인트(plain state_dict)의 GRU hidden 배수.
-    gru.weight_hh_l0 은 (3*H, H), H = processed_features * hidden_scale,
+    gru.weight_hh_l0 은 (3*H, H), H = int(round(processed_features * hidden_scale)),
     processed_features = 360 + 360 // 6 = 420 (End2RaceWithDelay 는 480)."""
     hidden = int(state_dict["gru.weight_hh_l0"].shape[1])
-    if hidden % processed_features:
-        raise ValueError(f"GRU hidden 크기 {hidden}가 {processed_features}의 배수가 아닙니다")
-    return hidden // processed_features
+    scale = hidden / processed_features
+    if abs(scale - round(scale)) < 1e-4:
+        return int(round(scale))
+    return scale
 
 
 class End2Race(nn.Module):
@@ -49,9 +50,10 @@ class End2Race(nn.Module):
         processed_features = self.num_features + self.num_features // 6
         
         # 4. GRU 아키텍처
+        hidden_dim = int(round(processed_features * hidden_scale))
         self.gru = nn.GRU(
             input_size=processed_features,
-            hidden_size=processed_features * hidden_scale,
+            hidden_size=hidden_dim,
             num_layers=1,
             batch_first=True,
             bidirectional=False
@@ -59,7 +61,7 @@ class End2Race(nn.Module):
         
         # 5. Output Layer
         self.output_layer = nn.Sequential(
-            nn.Linear(processed_features * hidden_scale, processed_features),
+            nn.Linear(hidden_dim, processed_features),
             nn.ReLU(),
             nn.Linear(processed_features, self.num_actions)
         )
@@ -154,16 +156,17 @@ class End2RaceWithDelay(nn.Module):
 
         processed_features = self.num_features + embed_dim * 2
 
+        hidden_dim = int(round(processed_features * hidden_scale))
         self.gru = nn.GRU(
             input_size=processed_features,
-            hidden_size=processed_features * hidden_scale,
+            hidden_size=hidden_dim,
             num_layers=1,
             batch_first=True,
             bidirectional=False
         )
 
         self.output_layer = nn.Sequential(
-            nn.Linear(processed_features * hidden_scale, processed_features),
+            nn.Linear(hidden_dim, processed_features),
             nn.ReLU(),
             nn.Linear(processed_features, self.num_actions)
         )
@@ -246,9 +249,10 @@ class End2RaceNorm(nn.Module):
         self.feature_norm = nn.LayerNorm(processed_features)
 
         # 4. GRU Architecture
+        hidden_dim = int(round(processed_features * hidden_scale))
         self.gru = nn.GRU(
             input_size=processed_features,
-            hidden_size=processed_features * hidden_scale,
+            hidden_size=hidden_dim,
             num_layers=1,
             batch_first=True,
             bidirectional=False
@@ -256,7 +260,7 @@ class End2RaceNorm(nn.Module):
 
         # 5. Output Layer with Tanh (출력 범위 [-1.0, 1.0])
         self.output_layer = nn.Sequential(
-            nn.Linear(processed_features * hidden_scale, processed_features),
+            nn.Linear(hidden_dim, processed_features),
             nn.ReLU(),
             nn.Linear(processed_features, self.num_actions),
             nn.Tanh()
