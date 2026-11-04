@@ -44,6 +44,20 @@ stop_launch() {
     sleep 2
 }
 
+# Nodes left by a launch that was killed without its process group (e.g. "pkill ros2 launch")
+# keep publishing /carN/drive from an old map and fight the new run's controllers. Kill them
+# before every launch unless ROS_DOMAIN_ID isolates this run from other runs in the container.
+stale_nodes='lattice_planner_node|pure_pursuit_controller_node|agent_node|ackermann_to_twist|episode_manager_node|static_transform_publisher|robot_state_publisher|joint_state_publisher|spawn_entity|ros2 bag record|gzserver|gzclient'
+kill_stale_nodes() {
+    [ -n "$ROS_DOMAIN_ID" ] && return
+    local pids
+    pids=$(pgrep -f "$stale_nodes")
+    [ -z "$pids" ] && return
+    echo "[$(date +%T)] killing $(echo $pids | wc -w) stale node processes from an earlier launch"
+    kill -KILL $pids 2>/dev/null
+    sleep 2
+}
+
 # Index of the last "[epNNNN] CLEAN|COLLISION" line in a launch log, or -1 if none.
 last_completed_episode() {
     local last
@@ -90,6 +104,7 @@ for map in "$@"; do
         # car1 unspawned and every episode recorded car2 alone). Relaunch until both cars exist.
         for attempt in 1 2 3; do
             # Fresh map: start from an empty folder. Resumed map: keep the bags before start_ep.
+            kill_stale_nodes
             if [ "$start_ep" -eq 0 ]; then
                 rm -rf "$out_root/$map"
             else

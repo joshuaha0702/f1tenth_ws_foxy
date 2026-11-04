@@ -294,12 +294,16 @@ def write_configs(ws, track, map_dir, lateral_offset):
     (map_dir / 'episodes.yaml').write_text(episodes)
 
 
-def generate(ws, track, with_configs=False):
-    """Write all outputs for one track; raises ValueError when the track is not drivable."""
+def generate(ws, track, with_configs=False, min_local_width=MIN_LOCAL_WIDTH, clearance_lanes=(0, 1, 2)):
+    """Write all outputs for one track; raises ValueError when the track is not drivable.
+
+    clearance_lanes: race lines that must keep MIN_LANE_CLEARANCE (the planner follows only
+    raceline1, so narrow tracks check just that one).
+    """
     _, r_in, r_out = track.walls()
     local_width = r_out - r_in
-    if local_width.min() < MIN_LOCAL_WIDTH:
-        raise ValueError(f'{track.name}: local width {local_width.min():.2f} m < {MIN_LOCAL_WIDTH} m')
+    if local_width.min() < min_local_width:
+        raise ValueError(f'{track.name}: local width {local_width.min():.2f} m < {min_local_width} m')
     if r_in.min() < MIN_INNER_RADIUS:
         raise ValueError(f'{track.name}: inner wall radius {r_in.min():.2f} m < {MIN_INNER_RADIUS} m')
     if track.cx - r_out.max() <= 0.5 or track.bottom_y - r_out.max() <= 0.5:
@@ -331,7 +335,7 @@ def generate(ws, track, with_configs=False):
         rows_px = np.clip((height - pts[:, 1] / RESOLUTION).astype(int), 0, height - 1)
         cols_px = (pts[:, 0] / RESOLUTION).astype(int)
         clearance = float(edt[rows_px, cols_px].min())
-        if clearance < MIN_LANE_CLEARANCE:
+        if i in clearance_lanes and clearance < MIN_LANE_CLEARANCE:
             raise ValueError(f'{track.name}: raceline{i} wall clearance {clearance:.2f} m '
                              f'< {MIN_LANE_CLEARANCE} m')
         lanes.append({'radius': radius, 'lap': length, 'points': rows, 'clearance': clearance})

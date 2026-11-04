@@ -79,9 +79,11 @@ def normals(pts):
 class FreeformTrack:
     def __init__(self, name, width, kappa_max, seed, mode='corners', max_tries=300000,
                  kappa_min=None, n_corners=None, left_share=None, straight=None,
-                 n_ctrl=None, straight_share=0.3, kappa_spread=0.3):
+                 n_ctrl=None, straight_share=0.3, kappa_spread=0.3, shape_width=None):
+        """shape_width: width used while searching for the centre line (default: width). Setting it
+        to an existing track's width keeps that track's layout and only moves the walls."""
         self.name = name
-        self.width = width
+        self.width = shape_width or width
         self.kappa_max = kappa_max
         self.seed = seed
         self.mode = mode
@@ -106,6 +108,7 @@ class FreeformTrack:
                 break
         else:
             raise ValueError(f'{name}: no valid shape in {max_tries} tries')
+        self.width = width
 
     def _corner_centre_line(self, rng, n_corners, left_share, straight):
         """Corners of constant curvature in [kappa_min, kappa_max]; turn angles sum to -360 deg
@@ -407,7 +410,7 @@ def write_configs(ws, track, map_dir, raceline, kappa, lateral_offset):
     (map_dir / 'episodes.yaml').write_text(episodes)
 
 
-def generate(ws, track):
+def generate(ws, track, clearance_lanes=(0, 1, 2)):
     lower = track.name.lower()
     map_dir = ws / 'src/f1tenth_lattice_ros2/maps' / track.name
     map_dir.mkdir(parents=True, exist_ok=True)
@@ -429,7 +432,7 @@ def generate(ws, track):
         rows = np.clip((height - pts[:, 1] / RESOLUTION).astype(int), 0, height - 1)
         cols = (pts[:, 0] / RESOLUTION).astype(int)
         clearance = float(edt[rows, cols].min())
-        if clearance < MIN_LANE_CLEARANCE:
+        if i in clearance_lanes and clearance < MIN_LANE_CLEARANCE:
             raise ValueError(f'{track.name}: raceline{i} wall clearance {clearance:.2f} m < {MIN_LANE_CLEARANCE} m')
         info['lanes'].append({'lap': length, 'points': len(pts), 'clearance': clearance,
                               'kappa_max': float(np.abs(kappa).max())})
@@ -495,7 +498,7 @@ def main():
         params = {**cfg.get('defaults', {}), **spec}
         shape = {k: v for k, v in params.items() if k not in ('name', 'width', 'kappa_max', 'seed')}
         track = FreeformTrack(params['name'], params['width'], params['kappa_max'], params['seed'], **shape)
-        info = generate(ws, track)
+        info = generate(ws, track, tuple(cfg.get('clearance_lanes', (0, 1, 2))))
         lane = info['lanes'][1]
         k = np.abs(info['kappa'])
         lane_k = ', '.join('%.2f' % l['kappa_max'] for l in info['lanes'])

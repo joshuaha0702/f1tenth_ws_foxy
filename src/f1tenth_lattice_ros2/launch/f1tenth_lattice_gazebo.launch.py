@@ -246,6 +246,18 @@ def generate_launch_description():
     ego_is_lattice = PythonExpression(['"', LaunchConfiguration('ego'), '" == "lattice"'])
     ego_is_end2race = PythonExpression(['"', LaunchConfiguration('ego'), '" == "end2race"'])
 
+    # 실차 재현 (ego 전용, 0 = 끔): agent_node sim.actuation_delay / sim.scan_delay / sim.speed_floor / sim.steer_sat
+    ego_sim_args = [
+        DeclareLaunchArgument('ego_actuation_delay', default_value='0.0',
+                              description='ego drive 명령 발행 지연 [s] (실차 명령→회전 +~0.11)'),
+        DeclareLaunchArgument('ego_scan_delay', default_value='0.0',
+                              description='ego 추론에 쓰는 scan 의 지연 [s] (실차 p08 ~0.1)'),
+        DeclareLaunchArgument('ego_speed_floor', default_value='0.0',
+                              description='ego 0 < 속도 < floor 이면 floor 로 발행 [m/s] (실차 저속 고정 ~0.66)'),
+        DeclareLaunchArgument('ego_steer_sat', default_value='0.0',
+                              description='ego 발행 조향 = S*tanh(δ/S) [rad] (실차 큰 조향 포화 ~0.34)'),
+    ]
+
     use_norm_arg = DeclareLaunchArgument(
         'use_norm',
         default_value='auto',
@@ -275,7 +287,7 @@ def generate_launch_description():
     except Exception:
         _end2race_config = None
 
-    def end2race_agent(robot, model, condition, speed_input, steer_lpf_tau, inference_decimate):
+    def end2race_agent(robot, model, condition, speed_input, steer_lpf_tau, inference_decimate, sim=None):
         # 학습 데이터와 같게 odom마다(sim time 100 Hz) 추론하고, 속도 배율은 학습 그대로(1.0).
         if _end2race_config is None:
             return []
@@ -298,13 +310,18 @@ def generate_launch_description():
                 'interp_steps': PythonExpression(["int('", LaunchConfiguration('interp_steps'), "')"]),
                 'control': {'speed_scale': 1.0,
                             'steer_lpf_tau': ParameterValue(steer_lpf_tau, value_type=float)},
+                **({'sim': {k: ParameterValue(v, value_type=float) for k, v in sim.items()}} if sim else {}),
             }],
         )]
 
     end2race_actions = end2race_agent('car1', LaunchConfiguration('ego_model'), ego_is_end2race,
                                       LaunchConfiguration('ego_speed_input'),
                                       LaunchConfiguration('ego_steer_lpf_tau'),
-                                      LaunchConfiguration('ego_inference_decimate'))
+                                      LaunchConfiguration('ego_inference_decimate'),
+                                      sim={'actuation_delay': LaunchConfiguration('ego_actuation_delay'),
+                                           'scan_delay': LaunchConfiguration('ego_scan_delay'),
+                                           'speed_floor': LaunchConfiguration('ego_speed_floor'),
+                                           'steer_sat': LaunchConfiguration('ego_steer_sat')})
     leader_end2race_actions = end2race_agent(
         'car2', LaunchConfiguration('leader_model'), leader_is_end2race,
         LaunchConfiguration('leader_speed_input'), LaunchConfiguration('leader_steer_lpf_tau'),
@@ -607,6 +624,7 @@ def generate_launch_description():
         model_rate_hz_arg,
         interp_mode_arg,
         interp_steps_arg,
+        *ego_sim_args,
         # gazebo.launch.py also uses ``record``. Preserve the user's data-bag
         # setting under a private key before any included launch executes.
         SetLaunchConfiguration(

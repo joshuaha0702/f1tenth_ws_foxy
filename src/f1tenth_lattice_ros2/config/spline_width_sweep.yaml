@@ -1,0 +1,16 @@
+# 평가 전용: Spline_s04와 같은 중앙선(shape_width 3.0)을 폭만 바꿔 만든 맵. 폭별 lattice 충돌률을 비교해
+# 좁은 트랙용 planner 설정(sampling_width_max, collision_thres)이 필요한 폭 범위를 정하는 데 쓴다.
+# 이름 끝 번호 04 = run_episodes.sh 시드 인덱스 (Spline_n04/Spline_s04와 같은 시작 상태).
+#   python3 src/f1tenth_lattice_ros2/tools/generate_freeform_tracks.py \
+#       --config src/f1tenth_lattice_ros2/config/spline_width_sweep.yaml --overview Spline_width_sweep_overview.png
+clearance_lanes: [1]
+
+defaults: { mode: spline }
+
+tracks:
+  - { name: Spline_w16_04, width: 1.6, shape_width: 3.0, kappa_max: 0.50, n_ctrl: 8,  straight_share: 0.3, left_share: 0.0,  kappa_spread: 0.2, seed: 204 }
+  - { name: Spline_w18_04, width: 1.8, shape_width: 3.0, kappa_max: 0.50, n_ctrl: 8,  straight_share: 0.3, left_share: 0.0,  kappa_spread: 0.2, seed: 204 }
+  - { name: Spline_w22_04, width: 2.2, shape_width: 3.0, kappa_max: 0.50, n_ctrl: 8,  straight_share: 0.3, left_share: 0.0,  kappa_spread: 0.2, seed: 204 }
+  - { name: Spline_w24_04, width: 2.4, shape_width: 3.0, kappa_max: 0.50, n_ctrl: 8,  straight_share: 0.3, left_share: 0.0,  kappa_spread: 0.2, seed: 204 }
+  - { name: Spline_w26_04, width: 2.6, shape_width: 3.0, kappa_max: 0.50, n_ctrl: 8,  straight_share: 0.3, left_share: 0.0,  kappa_spread: 0.2, seed: 204 }
+  - { name: Spline_w28_04, width: 2.8, shape_width: 3.0, kappa_max: 0.50, n_ctrl: 8,  straight_share: 0.3, left_share: 0.0,  kappa_spread: 0.2, seed: 204 }

@@ -60,6 +60,21 @@ def generate_launch_description():
         description='원격 모니터링용 RViz2 실행 여부 (실차에선 보통 false, 개발 PC에서 볼 때 true)'
     )
 
+    # 타이밍 진단 (scan 콜백·drive 틱·프로세스 상태를 /end2race/diag/* 로 1 초 단위 발행, bag 에 기록됨).
+    # scan_qos_depth / legacy_callback_groups 는 수정 전 구성(큐 10, true) 재현 비교용.
+    timing_diag_arg = DeclareLaunchArgument(
+        'timing_diag', default_value='true',
+        description='agent_node 타이밍 진단 기록 (/end2race/diag/{scan,tick,sys}). false 로 끔'
+    )
+    scan_qos_depth_arg = DeclareLaunchArgument(
+        'scan_qos_depth', default_value='1',
+        description='scan 구독 큐 깊이 (기본 1 = 최신 scan 만). 수정 전 재현은 10'
+    )
+    legacy_callback_groups_arg = DeclareLaunchArgument(
+        'legacy_callback_groups', default_value='false',
+        description='true 면 수정 전처럼 scan·drive 콜백을 같은 Reentrant 그룹에 둠 (진단 비교용)'
+    )
+
     namespace = LaunchConfiguration('namespace')
     model_path = LaunchConfiguration('model_path')
     use_norm = LaunchConfiguration('use_norm')
@@ -82,6 +97,13 @@ def generate_launch_description():
             'model_rate_hz': ParameterValue(LaunchConfiguration('model_rate_hz'), value_type=float),
             'interp_mode': LaunchConfiguration('interp_mode'),
             'interp_steps': ParameterValue(LaunchConfiguration('interp_steps'), value_type=int),
+            # 전처리 scan 은 RViz 확인용이라 RViz 를 띄울 때만 발행 (추론에는 쓰이지 않음)
+            'publish_preprocess_scan': ParameterValue(use_rviz, value_type=bool),
+            'diag': {
+                'timing': ParameterValue(LaunchConfiguration('timing_diag'), value_type=bool),
+                'scan_qos_depth': ParameterValue(LaunchConfiguration('scan_qos_depth'), value_type=int),
+                'legacy_callback_groups': ParameterValue(LaunchConfiguration('legacy_callback_groups'), value_type=bool),
+            },
         }],
         remappings=[
             (['/', namespace, '/scan'], '/scan'),
@@ -136,6 +158,9 @@ def generate_launch_description():
         interp_mode_arg,
         interp_steps_arg,
         use_rviz_arg,
+        timing_diag_arg,
+        scan_qos_depth_arg,
+        legacy_callback_groups_arg,
         record_bag_arg,
         agent_node,
         rviz_node,
