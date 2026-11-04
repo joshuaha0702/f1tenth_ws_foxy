@@ -1,0 +1,25 @@
+# freeform_tracks.yaml의 트랙을 폭 1.6~2.6 m로 좁힌 변형 (Freeform_fNN -> Freeform_nNN). 중앙선은 원본과 같다:
+# shape_width(원본 폭)로 원본과 같은 시드열에서 모양을 찾은 뒤 벽만 ±width/2에 세운다.
+# 폭은 번호 순으로 2.6/1.6/1.8/2.0/2.2/2.4 m를 돌아가며 배정 (n04 = 2.0 m, 평가 기준 맵).
+# 플래너는 raceline1만 추종하므로 벽 여유(>= 0.6 m) 검사는 raceline1에만 적용한다. 생성:
+#   python3 src/f1tenth_lattice_ros2/tools/generate_freeform_tracks.py \
+#       --config src/f1tenth_lattice_ros2/config/freeform_narrow_tracks.yaml --overview Freeform_narrow_overview.png
+clearance_lanes: [1]
+
+tracks:
+  - { name: Freeform_n01, width: 2.6, shape_width: 3.4, kappa_min: 0.25, kappa_max: 0.40, n_corners: 5, left_share: 0.15, straight: [3.0, 10.0], seed: 101 }
+  - { name: Freeform_n02, width: 1.6, shape_width: 3.2, kappa_min: 0.30, kappa_max: 0.45, n_corners: 6, left_share: 0.25, straight: [2.0, 8.0], seed: 102 }
+  - { name: Freeform_n03, width: 1.8, shape_width: 3.0, kappa_min: 0.35, kappa_max: 0.50, n_corners: 7, left_share: 0.30, straight: [1.5, 7.0], seed: 103 }
+  - { name: Freeform_n04, width: 2.0, shape_width: 3.0, kappa_min: 0.40, kappa_max: 0.52, n_corners: 6, left_share: 0.20, straight: [2.0, 9.0], seed: 104 }
+  - { name: Freeform_n05, width: 2.2, shape_width: 2.8, kappa_min: 0.40, kappa_max: 0.55, n_corners: 7, left_share: 0.30, straight: [1.5, 7.0], seed: 105 }
+  - { name: Freeform_n06, width: 2.4, shape_width: 3.6, kappa_min: 0.25, kappa_max: 0.40, n_corners: 8, left_share: 0.35, straight: [1.5, 6.0], seed: 106 }
+  - { name: Freeform_n07, width: 2.6, shape_width: 3.2, kappa_min: 0.35, kappa_max: 0.47, n_corners: 4, left_share: 0.00, straight: [4.0, 14.0], seed: 107 }
+  - { name: Freeform_n08, width: 1.6, shape_width: 3.0, kappa_min: 0.30, kappa_max: 0.52, n_corners: 9, left_share: 0.35, straight: [1.5, 6.0], seed: 108 }
+  - { name: Freeform_n09, width: 1.8, shape_width: 2.8, kappa_min: 0.45, kappa_max: 0.55, n_corners: 6, left_share: 0.25, straight: [2.0, 9.0], seed: 109 }
+  - { name: Freeform_n10, width: 2.0, shape_width: 3.4, kappa_min: 0.30, kappa_max: 0.43, n_corners: 6, left_share: 0.30, straight: [2.0, 9.0], seed: 110 }
+  - { name: Freeform_n11, width: 2.2, shape_width: 3.0, kappa_min: 0.35, kappa_max: 0.50, n_corners: 5, left_share: 0.15, straight: [3.0, 10.0], seed: 111 }
+  - { name: Freeform_n12, width: 2.4, shape_width: 2.8, kappa_min: 0.45, kappa_max: 0.57, n_corners: 5, left_share: 0.20, straight: [2.5, 10.0], seed: 112 }
+  - { name: Freeform_n13, width: 2.6, shape_width: 3.2, kappa_min: 0.30, kappa_max: 0.47, n_corners: 8, left_share: 0.30, straight: [1.5, 7.0], seed: 113 }
+  - { name: Freeform_n14, width: 1.6, shape_width: 3.6, kappa_min: 0.25, kappa_max: 0.42, n_corners: 7, left_share: 0.30, straight: [2.0, 8.0], seed: 114 }
+  - { name: Freeform_n15, width: 1.8, shape_width: 2.9, kappa_min: 0.40, kappa_max: 0.54, n_corners: 8, left_share: 0.30, straight: [1.5, 6.0], seed: 115 }
+  - { name: Freeform_n16, width: 2.0, shape_width: 3.1, kappa_min: 0.35, kappa_max: 0.48, n_corners: 6, left_share: 0.25, straight: [2.0, 8.0], seed: 116 }

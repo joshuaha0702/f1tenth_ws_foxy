@@ -47,7 +47,11 @@ def distance(vertices1, vertices2, direc):
     b = support(vertices1, vertices2, -direc)
     d = closestPoint2Origin(a, b)
     dist = np.linalg.norm(d)
-    while True:
+    # Bounded like collision(): a NaN pose made the unbounded loop spin forever (planner hang,
+    # "/carN/drive never published"). NaN distance is treated as contact.
+    for _ in range(1000):
+        if not np.isfinite(dist):
+            return 0.0
         if dist < 1e-10:
             return dist
         d = -d
@@ -68,6 +72,7 @@ def distance(vertices1, vertices2, direc):
             a = c
             d = p2
             dist = dist2
+    return dist
 
 
 @njit(cache=True)

@@ -7,6 +7,9 @@
 # min_wavelength:  굴곡의 최소 파장 (m). 파장 상한은 12 m
 # seed:            굴곡 난수 시드
 #
+# 2026-11-04: Simple 계열 폭 범위는 1.6~4.0 m (simple_narrow_variants.yaml의 n01~n10 + 여기 v01~v12).
+# v13~v20(4.2~4.8 m)은 맵 파일만 남기고 수집/학습 목록(map_set_narrow.txt)에서 제외한다.
+#
 # 생성기는 국소 폭 >= 2.8 m, 레이스 라인 벽 여유 >= 0.6 m를 만족하지 않으면 실패한다.
 
 defaults:

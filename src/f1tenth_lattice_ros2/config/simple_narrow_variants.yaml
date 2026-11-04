@@ -1,0 +1,26 @@
+# 좁은 Simple 변형 (국소 폭 >= 1.6 m, 명목 폭 1.6~3.0 m). simple_variants.yaml의 v01~v12(3.2~4.0 m)와 합쳐
+# Simple 계열 폭 1.6~4.0 m를 이룬다 (4.0 m 초과 v13~v20은 Simple 계열에서 제외). tools/generate_simple_variants.py --manifest 로 생성한다:
+#   python3 src/f1tenth_lattice_ros2/tools/generate_simple_variants.py \
+#       --manifest src/f1tenth_lattice_ros2/config/simple_narrow_variants.yaml --overview Simple_narrow_overview.png
+#
+# simple_variants.yaml(폭 3.2~4.8 m, 국소 폭 >= 2.8 m)보다 좁은 트랙. 기본 lattice 설정이 1.6~3.0 m에서
+# 벽 충돌 0으로 주행함을 확인했다 (data/eval_ego/w_clean, 2026-11-04).
+# 안쪽 벽 반경은 1.0 m 고정이라 폭이 좁을수록 중앙선 코너 반경(1.0 + 폭/2)도 작아진다.
+# 플래너는 raceline1만 추종하므로 벽 여유(>= 0.6 m) 검사는 raceline1에만 적용한다.
+min_local_width: 1.6
+clearance_lanes: [1]
+
+defaults:
+  min_wavelength: 4.0
+
+variants:
+  - { name: Simple_n01, track_width: 2.0, straight_length: 18.0, wall_amplitude: 0.00, seed: 1 }
+  - { name: Simple_n02, track_width: 2.2, straight_length: 20.0, wall_amplitude: 0.10, seed: 2 }
+  - { name: Simple_n03, track_width: 2.4, straight_length: 18.0, wall_amplitude: 0.00, seed: 3 }
+  - { name: Simple_n04, track_width: 2.4, straight_length: 22.0, wall_amplitude: 0.20, seed: 4, min_wavelength: 6.0 }
+  - { name: Simple_n05, track_width: 2.6, straight_length: 18.0, wall_amplitude: 0.00, seed: 5 }
+  - { name: Simple_n06, track_width: 2.6, straight_length: 24.0, wall_amplitude: 0.25, seed: 6 }
+  - { name: Simple_n07, track_width: 2.8, straight_length: 20.0, wall_amplitude: 0.30, seed: 7, min_wavelength: 6.0 }
+  - { name: Simple_n08, track_width: 3.0, straight_length: 22.0, wall_amplitude: 0.20, seed: 8 }
+  - { name: Simple_n09, track_width: 1.6, straight_length: 18.0, wall_amplitude: 0.00, seed: 9 }
+  - { name: Simple_n10, track_width: 1.8, straight_length: 22.0, wall_amplitude: 0.10, seed: 10 }

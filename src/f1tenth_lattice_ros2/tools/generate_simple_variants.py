@@ -20,7 +20,7 @@ from matplotlib.collections import PolyCollection
 import numpy as np
 import yaml
 
-from generate_simple_augmented import (POINT_STEP, RESOLUTION, WALL_HEIGHT,
+from generate_simple_augmented import (MIN_LOCAL_WIDTH, POINT_STEP, RESOLUTION, WALL_HEIGHT,
                                        Track, generate)
 
 
@@ -128,7 +128,7 @@ def draw_top(ax, track, info, lanes, image):
     ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.07), ncol=2, fontsize=8, frameon=False)
 
 
-def draw_width(ax, track):
+def draw_width(ax, track, min_width):
     counts = track.counts(POINT_STEP / 4)
     r_in, r_out = track.wall_radii(*counts)
     lap = 2 * track.straight_length + 2 * math.pi * track.centre_radius
@@ -136,13 +136,13 @@ def draw_width(ax, track):
     ax.plot(s, r_out - r_in, color=LANE_COLORS[0], lw=2)
     ax.axhline(track.track_width, color=INK_MUTED, lw=1, ls='--')
     ax.text(lap, track.track_width, ' nominal', color=INK_MUTED, va='center', fontsize=8)
-    ax.axhline(2.8, color=INK_MUTED, lw=1, ls=':')
-    ax.text(lap, 2.8, ' min allowed', color=INK_MUTED, va='center', fontsize=8)
+    ax.axhline(min_width, color=INK_MUTED, lw=1, ls=':')
+    ax.text(lap, min_width, ' min allowed', color=INK_MUTED, va='center', fontsize=8)
     straight, arc = counts
     for idx in (straight, straight + arc, 2 * straight + arc):
         ax.axvline(s[idx], color=GRID, lw=1)
     ax.set_xlim(0, lap)
-    ax.set_ylim(2.6, max(track.track_width + track.wall_amplitude * 2 + 0.2, 3.6))
+    ax.set_ylim(min_width - 0.2, max(track.track_width + track.wall_amplitude * 2 + 0.2, min_width + 0.8))
     ax.set_xlabel('distance along centre line from lap start (m)  |  grey lines: straight/corner boundaries')
     ax.set_ylabel('track width (m)')
     ax.grid(axis='y', color=GRID, lw=0.8)
@@ -151,7 +151,7 @@ def draw_width(ax, track):
     ax.set_title('Local track width along the lap', color=INK, fontsize=10, loc='left')
 
 
-def render(track, info, out_path):
+def render(track, info, out_path, min_width):
     lanes = load_lanes(info['map_dir'])
     image = np.array(plt.imread(str(info['map_dir'] / f'{track.name}_map.png')))
     image = (image * 255).astype(np.uint8) if image.dtype != np.uint8 else image
@@ -160,7 +160,7 @@ def render(track, info, out_path):
                             hspace=0.28, wspace=0.05)
     draw_3d(fig.add_subplot(grid[0, 0:2]), track, info, lanes)
     draw_top(fig.add_subplot(grid[0, 2]), track, info, lanes, image)
-    draw_width(fig.add_subplot(grid[1, :]), track)
+    draw_width(fig.add_subplot(grid[1, :]), track, min_width)
     fig.suptitle(
         f'{track.name}   width {track.track_width:.1f} m (local {info["width_min"]:.2f}~'
         f'{info["width_max"]:.2f} m)   straight {track.straight_length:.1f} m   '
@@ -212,11 +212,16 @@ def main():
     parser.add_argument('--manifest', type=Path, default=None,
                         help='default: <workspace>/src/f1tenth_lattice_ros2/config/simple_variants.yaml')
     parser.add_argument('--only', nargs='*', help='Generate only these variant names')
+    parser.add_argument('--overview', default='Simple_variants_overview.png',
+                        help='overview image name under maps/ (default: Simple_variants_overview.png)')
     args = parser.parse_args()
     ws = args.workspace.resolve()
     manifest = args.manifest or ws / 'src/f1tenth_lattice_ros2/config/simple_variants.yaml'
     spec = yaml.safe_load(manifest.read_text())
     defaults = spec.get('defaults', {})
+    # Optional manifest-level limits (narrow variants relax the 2.8 m / all-lanes checks).
+    min_width = float(spec.get('min_local_width', MIN_LOCAL_WIDTH))
+    clearance_lanes = tuple(spec.get('clearance_lanes', (0, 1, 2)))
 
     results = []
     for entry in spec['variants']:
@@ -226,8 +231,9 @@ def main():
         track = Track(params['name'], float(params['track_width']), float(params['straight_length']),
                       float(params.get('wall_amplitude', 0.0)),
                       float(params.get('min_wavelength', 4.0)), int(params.get('seed', 0)))
-        info = generate(ws, track, with_configs=True)
-        render(track, info, info['map_dir'] / f'{track.name}_render.png')
+        info = generate(ws, track, with_configs=True, min_local_width=min_width,
+                        clearance_lanes=clearance_lanes)
+        render(track, info, info['map_dir'] / f'{track.name}_render.png', min_width)
         results.append((track, info))
         clear = ', '.join(f'{lane["clearance"]:.2f}' for lane in info['lanes'])
         print(f'{track.name}: width {info["width_min"]:.2f}~{info["width_max"]:.2f} m, '
@@ -235,7 +241,7 @@ def main():
               f'lane clearance [{clear}] m, zones {info["follow_zones"]}, '
               f'lateral ±{info["lateral_offset"]:.1f} m')
     if results and not args.only:
-        render_overview(results, ws / 'src/f1tenth_lattice_ros2/maps/Simple_variants_overview.png')
+        render_overview(results, ws / 'src/f1tenth_lattice_ros2/maps' / args.overview)
     print(f'generated {len(results)} variants')
 
 
