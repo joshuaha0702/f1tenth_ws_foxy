@@ -1,4 +1,4 @@
-image: /home/capstone1/f1tenth_ws_foxy/src/f1tenth_lattice_ros2/maps/map_20261015_142409/map_20261015_142409_map.pgm
+image: map_20261015_142409_map_closed.pgm
 mode: trinary
 resolution: 0.05
 origin: [-11.9, -2.06, 0]

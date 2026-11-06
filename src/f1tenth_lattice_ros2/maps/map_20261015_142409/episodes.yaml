@@ -1,0 +1,25 @@
+# map_20261015_142409: Real map 50 episode collection config
+num_episodes: 50
+raceline_path: /root/f1tenth_ws/src/f1tenth_lattice_ros2/maps/map_20261015_142409/raceline1.csv
+
+opponent_offset:
+  min: 5
+  max: 20
+
+traj_v_scale:
+  car1: { min: 1.0, max: 1.0 }
+  car2: { min: 0.4, max: 0.7 }
+
+spawn_perturbation:
+  lateral_offset_m: 0.2
+  yaw_deg: 5.0
+
+random_seed: 20261106
+sequence_duration_sec: 10.0
+settle_time_sec: 2.0
+
+output:
+  base_dir: /root/f1tenth_ws/data/real_map_1015_h2h
+  staging_subdir: staging
+  clean_subdir: clean
+  collision_subdir: collision
