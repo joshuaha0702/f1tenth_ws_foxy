@@ -29,6 +29,7 @@ class End2RaceAgent(Node):
         self.declare_parameter('control.min_steer', -0.52)
         self.declare_parameter('control.max_speed', 2.0)
         self.declare_parameter('control.speed_scale', 1.0)
+        self.declare_parameter('control.initial_speed', 0.0)
         # 학습 시 라이다 FOV (시뮬레이터 270° = ±2.35619 rad 기준).
         # 360개 feature가 이 각도 범위 전체를 균일하게 덮는다고 가정.
         self.declare_parameter('lidar.fov_min', -2.35619)
@@ -52,6 +53,8 @@ class End2RaceAgent(Node):
         self.declare_parameter('sim.scan_delay', 0.0)       # 추론에 이만큼 오래된 scan 사용 [s] (실차 p08 ~0.1)
         self.declare_parameter('sim.speed_floor', 0.0)      # 0 < 속도 < floor 이면 floor 로 발행 (실차 저속 고정 ~0.66)
         self.declare_parameter('sim.steer_sat', 0.0)        # 발행 조향 = S*tanh(δ/S) (실차 큰 조향 포화 ~0.34)
+        self.declare_parameter('sim.steer_clip_min', 0.0)   # VESC servo_max 하드 클립 [rad] (예: 166번 우회전 -0.2918)
+        self.declare_parameter('sim.steer_clip_max', 0.0)   # VESC servo_min 하드 클립 [rad] (예: 166번 좌회전 +0.3475)
 
         # 'timer': wall clock (실차 기본). 'odom': odom 메시지마다 한 스텝 추론해
         # 학습 데이터와 같은 시뮬레이션 시간으로 동작하고 drive stamp = odom stamp.
@@ -75,6 +78,7 @@ class End2RaceAgent(Node):
         self.min_steer = self.get_parameter('control.min_steer').value
         self.max_speed = self.get_parameter('control.max_speed').value
         self.speed_scale = self.get_parameter('control.speed_scale').value
+        self.initial_speed = float(self.get_parameter('control.initial_speed').value)
         self.fov_min = self.get_parameter('lidar.fov_min').value
         self.fov_max = self.get_parameter('lidar.fov_max').value
         self.lidar_max_range = self.get_parameter('lidar.max_range').value
@@ -93,14 +97,17 @@ class End2RaceAgent(Node):
         self.sim_scan_delay = float(self.get_parameter('sim.scan_delay').value)
         self.sim_speed_floor = float(self.get_parameter('sim.speed_floor').value)
         self.sim_steer_sat = float(self.get_parameter('sim.steer_sat').value)
+        self.sim_steer_clip_min = float(self.get_parameter('sim.steer_clip_min').value)
+        self.sim_steer_clip_max = float(self.get_parameter('sim.steer_clip_max').value)
         self._scan_hist = deque(maxlen=200)  # (stamp [s], ranges) — sim.scan_delay 용
         self._act_hist = deque()             # (stamp [s], steer, speed) — sim.actuation_delay 용
         if (self.sim_actuation_delay > 0.0 or self.sim_scan_delay > 0.0 or self.sim_speed_floor > 0.0
-                or self.sim_steer_sat > 0.0):
+                or self.sim_steer_sat > 0.0 or self.sim_steer_clip_min < 0.0 or self.sim_steer_clip_max > 0.0):
             self.get_logger().warn(
                 f"[{self.robot_name}] [sim 재현] actuation_delay={self.sim_actuation_delay:.3f}s, "
                 f"scan_delay={self.sim_scan_delay:.3f}s, speed_floor={self.sim_speed_floor:.2f} m/s, "
-                f"steer_sat={self.sim_steer_sat:.2f} rad")
+                f"steer_sat={self.sim_steer_sat:.2f} rad, "
+                f"steer_clip=[{self.sim_steer_clip_min:.4f}, {self.sim_steer_clip_max:.4f}] rad")
         self.interp_mode = str(self.get_parameter('interp_mode').value).lower()
         if self.interp_mode not in ('linear', 'zoh'):
             raise RuntimeError(f"[{self.robot_name}] interp_mode은 'linear' 또는 'zoh'여야 합니다: {self.interp_mode}")
@@ -170,13 +177,13 @@ class End2RaceAgent(Node):
 
         # 3. GRU Hidden State & 제어 보간 상태 초기화
         self.hidden_state = None
-        self.current_speed = 0.0
+        self.current_speed = self.initial_speed
         self.current_steer = 0.0
-        self.start_speed = 0.0
+        self.start_speed = self.initial_speed
         self.start_steer = 0.0
-        self.target_speed = 0.0
+        self.target_speed = self.initial_speed
         self.target_steer = 0.0
-        self.last_inference_speed = 0.0  # 모델 speed_input='command'용 직전 추론 속도
+        self.last_inference_speed = self.initial_speed  # 모델 speed_input='command'용 직전 추론 속도
         self.tick_counter = 0
         self.interp_step = 0
         self.measured_speed = 0.0  # speed_input='odom'/'hybrid'일 때 최신 odom twist.linear.x
@@ -347,13 +354,13 @@ class End2RaceAgent(Node):
     def _reset_control_state(self):
         """에피소드 정지 및 재시작 시 제어/보간 내부 상태 초기화"""
         self.hidden_state = None
-        self.current_speed = 0.0
+        self.current_speed = self.initial_speed
         self.current_steer = 0.0
-        self.start_speed = 0.0
+        self.start_speed = self.initial_speed
         self.start_steer = 0.0
-        self.target_speed = 0.0
+        self.target_speed = self.initial_speed
         self.target_steer = 0.0
-        self.last_inference_speed = 0.0
+        self.last_inference_speed = self.initial_speed
         self.tick_counter = 0
         self.interp_step = 0
         self.measured_speed = 0.0
@@ -632,12 +639,21 @@ class End2RaceAgent(Node):
             speed_pub = self.sim_speed_floor
         if self.sim_steer_sat > 0.0:
             steer_pub = float(self.sim_steer_sat * np.tanh(steer_pub / self.sim_steer_sat))
+        if self.sim_steer_clip_min < 0.0 or self.sim_steer_clip_max > 0.0:
+            lo = self.sim_steer_clip_min if self.sim_steer_clip_min < 0.0 else self.min_steer
+            hi = self.sim_steer_clip_max if self.sim_steer_clip_max > 0.0 else self.max_steer
+            steer_pub = float(np.clip(steer_pub, lo, hi))
         if self.sim_actuation_delay > 0.0:
             self._act_hist.append((now_s, steer_pub, speed_pub))
             while len(self._act_hist) > 1 and self._act_hist[1][0] <= now_s - self.sim_actuation_delay:
                 self._act_hist.popleft()
             t, steer_d, speed_d = self._act_hist[0]
-            steer_pub, speed_pub = (steer_d, speed_d) if t <= now_s - self.sim_actuation_delay else (0.0, 0.0)
+            if t <= now_s - self.sim_actuation_delay:
+                steer_pub, speed_pub = (steer_d, speed_d)
+            elif self.initial_speed > 0.0:
+                steer_pub, speed_pub = (steer_d, self.initial_speed)
+            else:
+                steer_pub, speed_pub = (0.0, 0.0)
 
         drive_msg = AckermannDriveStamped()
         drive_msg.header.stamp = stamp

@@ -1,0 +1,11 @@
+collision_source: car1
+first_drive:
+  car1: 16.804
+  car2: null
+path_m:
+  car1: 2.275
+recorder_ready: true
+stuck: []
+t_end: 41.804
+t_start: 16.804
+verdict: collision

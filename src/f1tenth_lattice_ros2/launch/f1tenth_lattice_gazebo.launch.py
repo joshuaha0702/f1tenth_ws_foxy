@@ -256,6 +256,12 @@ def generate_launch_description():
                               description='ego 0 < 속도 < floor 이면 floor 로 발행 [m/s] (실차 저속 고정 ~0.66)'),
         DeclareLaunchArgument('ego_steer_sat', default_value='0.0',
                               description='ego 발행 조향 = S*tanh(δ/S) [rad] (실차 큰 조향 포화 ~0.34)'),
+        DeclareLaunchArgument('ego_steer_clip_min', default_value='0.0',
+                              description='ego 우회전 하드 클립 [rad] (166번 실차: -0.2918)'),
+        DeclareLaunchArgument('ego_steer_clip_max', default_value='0.0',
+                              description='ego 좌회전 하드 클립 [rad] (166번 실차: +0.3475)'),
+        DeclareLaunchArgument('ego_initial_speed', default_value='0.0',
+                              description='ego 초기 주행 속도 [m/s] (실차 주행 중 녹화 재현용)'),
     ]
 
     use_norm_arg = DeclareLaunchArgument(
@@ -287,10 +293,11 @@ def generate_launch_description():
     except Exception:
         _end2race_config = None
 
-    def end2race_agent(robot, model, condition, speed_input, steer_lpf_tau, inference_decimate, sim=None):
+    def end2race_agent(robot, model, condition, speed_input, steer_lpf_tau, inference_decimate, sim=None, initial_speed=0.0):
         # 학습 데이터와 같게 odom마다(sim time 100 Hz) 추론하고, 속도 배율은 학습 그대로(1.0).
         if _end2race_config is None:
             return []
+        init_sp_param = initial_speed if isinstance(initial_speed, (int, float)) else ParameterValue(initial_speed, value_type=float)
         return [Node(
             package='f1tenth_end2race_ros2',
             executable='agent_node',
@@ -309,7 +316,8 @@ def generate_launch_description():
                 'interp_mode': LaunchConfiguration('interp_mode'),
                 'interp_steps': PythonExpression(["int('", LaunchConfiguration('interp_steps'), "')"]),
                 'control': {'speed_scale': 1.0,
-                            'steer_lpf_tau': ParameterValue(steer_lpf_tau, value_type=float)},
+                            'steer_lpf_tau': ParameterValue(steer_lpf_tau, value_type=float),
+                            'initial_speed': init_sp_param},
                 **({'sim': {k: ParameterValue(v, value_type=float) for k, v in sim.items()}} if sim else {}),
             }],
         )]
@@ -321,7 +329,10 @@ def generate_launch_description():
                                       sim={'actuation_delay': LaunchConfiguration('ego_actuation_delay'),
                                            'scan_delay': LaunchConfiguration('ego_scan_delay'),
                                            'speed_floor': LaunchConfiguration('ego_speed_floor'),
-                                           'steer_sat': LaunchConfiguration('ego_steer_sat')})
+                                           'steer_sat': LaunchConfiguration('ego_steer_sat'),
+                                           'steer_clip_min': LaunchConfiguration('ego_steer_clip_min'),
+                                           'steer_clip_max': LaunchConfiguration('ego_steer_clip_max')},
+                                      initial_speed=LaunchConfiguration('ego_initial_speed'))
     leader_end2race_actions = end2race_agent(
         'car2', LaunchConfiguration('leader_model'), leader_is_end2race,
         LaunchConfiguration('leader_speed_input'), LaunchConfiguration('leader_steer_lpf_tau'),
