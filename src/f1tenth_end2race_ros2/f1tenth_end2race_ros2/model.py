@@ -219,12 +219,15 @@ class End2RaceNorm(nn.Module):
     """
 
     def __init__(self, mask_prob=0.0, hidden_scale=4, speed_dims=1,
-                 max_steer=0.52, max_speed=2.0):
+                 max_steer=0.28, max_speed=2.0, min_speed=0.5):
         super(End2RaceNorm, self).__init__()
 
         # 물리 제약 상수 (정규화/역정규화용)
         self.max_steer = max_steer
         self.max_speed = max_speed
+        self.min_speed = min_speed
+        self.speed_mid = 0.5 * (max_speed + min_speed)   # 1.25 m/s
+        self.speed_half = 0.5 * (max_speed - min_speed)  # 0.75 m/s
 
         self.num_features = 360  # LiDAR 빔 개수
         self.num_actions = 2     # [Steering, Speed]
@@ -337,9 +340,11 @@ class End2RaceNorm(nn.Module):
 
         if unnormalize:
             # [-1, 1] -> 물리 단위 [rad, m/s] 복원
+            # 조향: [-1, 1] -> [-max_steer, +max_steer] ([-0.28, +0.28] rad)
             steer = actions[0] * self.max_steer
-            # 속도는 양수(전진)이므로 clamp(0.0) 후 max_speed 곱
-            speed = np.clip(actions[1], 0.0, 1.0) * self.max_speed
+            # 속도: [-1, 1] -> [min_speed, max_speed] ([0.5, 2.0] m/s, 0.75 * a + 1.25)
+            speed = actions[1] * self.speed_half + self.speed_mid
+            speed = np.clip(speed, self.min_speed, self.max_speed)
             return np.array([steer, speed], dtype=np.float32), next_hidden
 
         return actions, next_hidden

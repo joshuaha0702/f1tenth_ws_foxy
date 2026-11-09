@@ -15,7 +15,7 @@ from nav_msgs.msg import Odometry
 from std_msgs.msg import String, Float64MultiArray, MultiArrayDimension
 from ackermann_msgs.msg import AckermannDriveStamped
 from .model import End2Race, End2RaceNorm, speed_dims_from_state_dict, hidden_scale_from_state_dict
-from .scan_preprocess import build_scan_mapping, pool_scan
+from .scan_preprocess import build_scan_mapping, pool_scan, SpatioTemporalScanFilter
 
 class End2RaceAgent(Node):
     def __init__(self):
@@ -25,9 +25,10 @@ class End2RaceAgent(Node):
         self.declare_parameter('robot_name', 'car1')
         self.declare_parameter('model_path', '/home/f1tenth_ws_foxy/src/f1tenth_end2race_ros2/models/end2race.pth')
         self.declare_parameter('hidden_scale', 4.0)
-        self.declare_parameter('control.max_steer', 0.52)
-        self.declare_parameter('control.min_steer', -0.52)
+        self.declare_parameter('control.max_steer', 0.28)
+        self.declare_parameter('control.min_steer', -0.28)
         self.declare_parameter('control.max_speed', 2.0)
+        self.declare_parameter('control.min_speed', 0.5)
         self.declare_parameter('control.speed_scale', 1.0)
         self.declare_parameter('control.initial_speed', 0.0)
         # 학습 시 라이다 FOV (시뮬레이터 270° = ±2.35619 rad 기준).
@@ -77,6 +78,7 @@ class End2RaceAgent(Node):
         self.max_steer = self.get_parameter('control.max_steer').value
         self.min_steer = self.get_parameter('control.min_steer').value
         self.max_speed = self.get_parameter('control.max_speed').value
+        self.min_speed = float(self.get_parameter('control.min_speed').value)
         self.speed_scale = self.get_parameter('control.speed_scale').value
         self.initial_speed = float(self.get_parameter('control.initial_speed').value)
         self.fov_min = self.get_parameter('lidar.fov_min').value
@@ -161,7 +163,8 @@ class End2RaceAgent(Node):
                 hidden_scale=self.hidden_scale,
                 speed_dims=speed_dims,
                 max_steer=self.max_steer,
-                max_speed=self.max_speed
+                max_speed=self.max_speed,
+                min_speed=self.min_speed
             ).to(self.device)
             self.get_logger().info(f"[{self.robot_name}] [정규화 모델] End2RaceNorm 로드 성공: {self.model_path}, device: {self.device}")
         else:
@@ -176,14 +179,15 @@ class End2RaceAgent(Node):
         self.model.set_inference_device(self.device)
 
         # 3. GRU Hidden State & 제어 보간 상태 초기화
+        init_v = self.initial_speed if self.initial_speed > 0.0 else (self.min_speed if self.is_norm_model else 0.0)
         self.hidden_state = None
-        self.current_speed = self.initial_speed
+        self.current_speed = init_v
         self.current_steer = 0.0
-        self.start_speed = self.initial_speed
+        self.start_speed = init_v
         self.start_steer = 0.0
-        self.target_speed = self.initial_speed
+        self.target_speed = init_v
         self.target_steer = 0.0
-        self.last_inference_speed = self.initial_speed  # 모델 speed_input='command'용 직전 추론 속도
+        self.last_inference_speed = init_v  # 모델 speed_input='command'용 직전 추론 속도
         self.tick_counter = 0
         self.interp_step = 0
         self.measured_speed = 0.0  # speed_input='odom'/'hybrid'일 때 최신 odom twist.linear.x
@@ -200,6 +204,13 @@ class End2RaceAgent(Node):
         self.latest_ranges = None
         self.latest_scan_stamp = None
         self.latest_scan_id = -1
+
+        # 공간-시간 연속성 기반 2중벽 제거 필터
+        self.scan_filter = SpatioTemporalScanFilter(
+            num_bins=self.num_features,
+            fov_min=self.fov_min,
+            fov_max=self.fov_max
+        )
 
         # 각도 기준 다운스케일 매핑 캐시 (라이다 기하가 바뀔 때만 재계산)
         self._scan_cache = {}
@@ -353,20 +364,23 @@ class End2RaceAgent(Node):
 
     def _reset_control_state(self):
         """에피소드 정지 및 재시작 시 제어/보간 내부 상태 초기화"""
+        init_v = self.initial_speed if self.initial_speed > 0.0 else (self.min_speed if self.is_norm_model else 0.0)
         self.hidden_state = None
-        self.current_speed = self.initial_speed
+        self.current_speed = init_v
         self.current_steer = 0.0
-        self.start_speed = self.initial_speed
+        self.start_speed = init_v
         self.start_steer = 0.0
-        self.target_speed = self.initial_speed
+        self.target_speed = init_v
         self.target_steer = 0.0
-        self.last_inference_speed = self.initial_speed
+        self.last_inference_speed = init_v
         self.tick_counter = 0
         self.interp_step = 0
         self.measured_speed = 0.0
         self._steer_filt = None
         self._scan_hist.clear()
         self._act_hist.clear()
+        if hasattr(self, 'scan_filter'):
+            self.scan_filter.reset()
 
     def _watchdog_callback(self):
         if not self.publishing_enabled:
@@ -433,6 +447,7 @@ class End2RaceAgent(Node):
                 )
             self._scan_cache[key] = mapping
         out = pool_scan(msg.ranges, self._scan_cache[key], self.num_features, self.lidar_max_range)
+        out = self.scan_filter(out)
 
         self.latest_ranges = out
         self.latest_scan_stamp = msg.header.stamp
@@ -600,7 +615,8 @@ class End2RaceAgent(Node):
                                         f"GPU 경합/정지 의심 (이후 동일 경고는 생략)")
 
             new_steer = float(actions[0])
-            new_speed = float(np.clip(actions[1], 0.0, self.max_speed)) * self.speed_scale
+            lo_speed = self.min_speed if self.is_norm_model else 0.0
+            new_speed = float(np.clip(actions[1], lo_speed, self.max_speed)) * self.speed_scale
 
             # 보간 구간 갱신: 시작점은 현재 출력값, 목표점은 새 추론값
             self.start_steer = self.current_steer

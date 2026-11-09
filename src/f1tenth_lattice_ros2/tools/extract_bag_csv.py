@@ -16,7 +16,7 @@ from rosbags.typesys import Stores, get_typestore, get_types_from_msg
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 '..', '..', 'f1tenth_end2race_ros2'))
 from f1tenth_end2race_ros2.scan_preprocess import (  # noqa: E402
-    NUM_FEATURES, build_scan_mapping, pool_scan)
+    NUM_FEATURES, build_scan_mapping, pool_scan, SpatioTemporalScanFilter)
 
 
 # rosbags 기본 typestore에는 ackermann_msgs가 없어서 직접 등록해야 함
@@ -121,6 +121,8 @@ def extract_bag_to_csv(bag_dir_path, save_dir='/root/f1tenth_ws/f1tenth_data', r
     clock_wall = []     # bag 기록 시각(ns)
     clock_sim = []      # 그 순간의 sim-time(ns)
 
+    scan_filter = SpatioTemporalScanFilter()
+
     print(f"데이터 추출 시작... (대상: {bag_name})")
 
     try:
@@ -139,7 +141,8 @@ def extract_bag_to_csv(bag_dir_path, save_dir='/root/f1tenth_ws/f1tenth_data', r
                     key = (len(msg.ranges), msg.angle_min, msg.angle_increment)
                     if key not in scan_mappings:
                         scan_mappings[key] = build_scan_mapping(*key)
-                    reduced_ranges = pool_scan(msg.ranges, scan_mappings[key]).tolist()
+                    reduced_ranges = pool_scan(msg.ranges, scan_mappings[key])
+                    reduced_ranges = scan_filter(reduced_ranges).tolist()
                     scans.append((bag_ts, reduced_ranges))
                     scan_headers.append(stamp_to_ns(msg.header.stamp))
 
