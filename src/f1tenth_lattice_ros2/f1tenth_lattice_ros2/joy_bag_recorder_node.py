@@ -58,6 +58,7 @@ class JoyBagRecorderNode(Node):
         # 핵심 녹화 토픽 설정
         self.record_topics = [
             '/scan',
+            '/preprocess_scan',
             '/odom',
             '/drive',
             '/teleop',

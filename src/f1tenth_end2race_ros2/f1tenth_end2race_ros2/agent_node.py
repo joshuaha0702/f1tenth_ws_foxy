@@ -18,7 +18,7 @@ from .model import End2Race, End2RaceNorm, speed_dims_from_state_dict, hidden_sc
 from .scan_preprocess import build_scan_mapping, pool_scan, SpatioTemporalScanFilter
 
 class End2RaceAgent(Node):
-    def __init__(self):
+    def __init__(self, cli_filter=None):
         super().__init__('end2race_node')
         
         # 1. 파라미터 선언
@@ -31,6 +31,7 @@ class End2RaceAgent(Node):
         self.declare_parameter('control.min_speed', 0.5)
         self.declare_parameter('control.speed_scale', 1.0)
         self.declare_parameter('control.initial_speed', 0.0)
+        self.declare_parameter('filter', True)
         # 학습 시 라이다 FOV (시뮬레이터 270° = ±2.35619 rad 기준).
         # 360개 feature가 이 각도 범위 전체를 균일하게 덮는다고 가정.
         self.declare_parameter('lidar.fov_min', -2.35619)
@@ -206,11 +207,15 @@ class End2RaceAgent(Node):
         self.latest_scan_id = -1
 
         # 공간-시간 연속성 기반 2중벽 제거 필터
+        param_filter = bool(self.get_parameter('filter').value)
+        self.use_scan_filter = cli_filter if cli_filter is not None else param_filter
+        self.get_logger().info(f"[{self.robot_name}] LiDAR 2중벽 시공간 필터 적용: {self.use_scan_filter}")
+
         self.scan_filter = SpatioTemporalScanFilter(
             num_bins=self.num_features,
             fov_min=self.fov_min,
             fov_max=self.fov_max
-        )
+        ) if self.use_scan_filter else None
 
         # 각도 기준 다운스케일 매핑 캐시 (라이다 기하가 바뀔 때만 재계산)
         self._scan_cache = {}
@@ -379,7 +384,7 @@ class End2RaceAgent(Node):
         self._steer_filt = None
         self._scan_hist.clear()
         self._act_hist.clear()
-        if hasattr(self, 'scan_filter'):
+        if getattr(self, 'scan_filter', None) is not None:
             self.scan_filter.reset()
 
     def _watchdog_callback(self):
@@ -447,7 +452,8 @@ class End2RaceAgent(Node):
                 )
             self._scan_cache[key] = mapping
         out = pool_scan(msg.ranges, self._scan_cache[key], self.num_features, self.lidar_max_range)
-        out = self.scan_filter(out)
+        if self.use_scan_filter and self.scan_filter is not None:
+            out = self.scan_filter(out)
 
         self.latest_ranges = out
         self.latest_scan_stamp = msg.header.stamp
@@ -678,9 +684,22 @@ class End2RaceAgent(Node):
         self.drive_pub.publish(drive_msg)
         self._last_drive_wall = time.monotonic()
 
+def _parse_filter_cli(argv):
+    import argparse
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument('--filter', type=str, default=None)
+    parsed, remaining = parser.parse_known_args(argv)
+    filter_val = None
+    if parsed.filter is not None:
+        filter_val = parsed.filter.lower() in ('true', '1', 'yes', 't')
+    return filter_val, remaining
+
 def main(args=None):
-    rclpy.init(args=args)
-    node = End2RaceAgent()
+    import sys
+    raw_args = sys.argv[1:] if args is None else list(args)
+    cli_filter, ros_args = _parse_filter_cli(raw_args)
+    rclpy.init(args=ros_args)
+    node = End2RaceAgent(cli_filter=cli_filter)
     executor = MultiThreadedExecutor()
     node.executor_threads = getattr(getattr(executor, '_executor', None), '_max_workers', 0) or 0
     executor.add_node(node)

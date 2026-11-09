@@ -83,7 +83,7 @@ def header_stamps_valid(stamps_ns, label='drive'):
 
 
 def extract_bag_to_csv(bag_dir_path, save_dir='/root/f1tenth_ws/f1tenth_data', robot_name='car1',
-                       min_row_gap_s=0.006, time_source='auto'):
+                       min_row_gap_s=0.006, time_source='auto', use_filter=True):
     """time_source: 'header' = drive/scan header.stamp(sim time) 기준, 모든 drive를 한 행으로.
     'receipt' = bag 수신 시각을 /clock으로 sim time에 보간하고 버스트를 건너뜀(예전 데이터용).
     'auto' = drive header stamp가 유효하면 header, 아니면 receipt."""
@@ -121,9 +121,9 @@ def extract_bag_to_csv(bag_dir_path, save_dir='/root/f1tenth_ws/f1tenth_data', r
     clock_wall = []     # bag 기록 시각(ns)
     clock_sim = []      # 그 순간의 sim-time(ns)
 
-    scan_filter = SpatioTemporalScanFilter()
+    scan_filter = SpatioTemporalScanFilter() if use_filter else None
 
-    print(f"데이터 추출 시작... (대상: {bag_name})")
+    print(f"데이터 추출 시작... (대상: {bag_name}, 필터 적용: {use_filter})")
 
     try:
         with Reader(bag_dir_path) as reader:
@@ -142,7 +142,9 @@ def extract_bag_to_csv(bag_dir_path, save_dir='/root/f1tenth_ws/f1tenth_data', r
                     if key not in scan_mappings:
                         scan_mappings[key] = build_scan_mapping(*key)
                     reduced_ranges = pool_scan(msg.ranges, scan_mappings[key])
-                    reduced_ranges = scan_filter(reduced_ranges).tolist()
+                    if scan_filter is not None:
+                        reduced_ranges = scan_filter(reduced_ranges)
+                    reduced_ranges = reduced_ranges.tolist() if hasattr(reduced_ranges, 'tolist') else list(reduced_ranges)
                     scans.append((bag_ts, reduced_ranges))
                     scan_headers.append(stamp_to_ns(msg.header.stamp))
 
@@ -296,11 +298,22 @@ def _write_header_rows(csv_file_path, scans, scan_headers, drives, drive_headers
 if __name__ == '__main__':
     import argparse
 
+    def str2bool(v):
+        if isinstance(v, bool):
+            return v
+        if str(v).lower() in ('yes', 'true', 't', 'y', '1'):
+            return True
+        elif str(v).lower() in ('no', 'false', 'f', 'n', '0'):
+            return False
+        raise argparse.ArgumentTypeError('Boolean value expected.')
+
     parser = argparse.ArgumentParser(description='Extract ego and leader training CSVs from clean episode bags')
     parser.add_argument('folder_name', help='data/ 아래 수집 폴더 이름')
     parser.add_argument('--robots', nargs='+', choices=('car1', 'car2'), default=('car1', 'car2'))
     parser.add_argument('--time-source', choices=('auto', 'header', 'receipt'), default='auto',
                         help='auto: drive header stamp가 유효하면 header, 아니면 bag 수신 시각')
+    parser.add_argument('--filter', type=str2bool, default=True,
+                        help='LiDAR 2중벽 시공간 필터 적용 여부 (기본값: True)')
     args = parser.parse_args()
 
     # data/<folder_name>/clean 안의 모든 rosbag을 data/<folder_name>/csv 에 추출
@@ -327,7 +340,8 @@ if __name__ == '__main__':
             print("=" * 60)
             for robot in args.robots:
                 totals[robot] += extract_bag_to_csv(folder, save_dir=save_dir, robot_name=robot,
-                                                    time_source=args.time_source)
+                                                    time_source=args.time_source,
+                                                    use_filter=args.filter)
 
         print("=" * 60)
         print(f"모든 bag 파일의 데이터 추출이 완료되었음. 저장 위치: {save_dir}")

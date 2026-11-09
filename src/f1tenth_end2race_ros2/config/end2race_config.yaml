@@ -8,11 +8,13 @@
     # (train.py --speed_input odom으로 학습한 모델에만 사용), "hybrid" = [odom, 직전 출력] 2채널
     # (train.py --speed_input hybrid 모델)
     speed_input: "command"
+    filter: true
     
     control:
-      max_steer: 0.52
-      min_steer: -0.52
+      max_steer: 0.28
+      min_steer: -0.28
       max_speed: 2.0
+      min_speed: 0.5
       speed_scale: 1.0  # 1.0이 원본 속도, 0.5는 절반 속도
 
     environment:

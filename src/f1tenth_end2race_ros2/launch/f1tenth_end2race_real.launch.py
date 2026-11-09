@@ -74,6 +74,14 @@ def generate_launch_description():
         'legacy_callback_groups', default_value='false',
         description='true 면 수정 전처럼 scan·drive 콜백을 같은 Reentrant 그룹에 둠 (진단 비교용)'
     )
+    filter_arg = DeclareLaunchArgument(
+        'filter', default_value='true',
+        description='LiDAR 2중벽 시공간 필터 적용 여부 (기본: true)'
+    )
+    publish_preprocess_scan_arg = DeclareLaunchArgument(
+        'publish_preprocess_scan', default_value='true',
+        description='모델 입력용 360개 전처리/필터링 scan (/preprocess_scan) 발행 여부 (기본: true)'
+    )
 
     namespace = LaunchConfiguration('namespace')
     model_path = LaunchConfiguration('model_path')
@@ -92,13 +100,14 @@ def generate_launch_description():
             'model_path': model_path,
             'robot_name': namespace,
             'speed_input': LaunchConfiguration('speed_input'),
+            'filter': ParameterValue(LaunchConfiguration('filter'), value_type=bool),
             'control': {'steer_lpf_tau': ParameterValue(LaunchConfiguration('steer_lpf_tau'), value_type=float)},
             'use_norm': use_norm,
             'model_rate_hz': ParameterValue(LaunchConfiguration('model_rate_hz'), value_type=float),
             'interp_mode': LaunchConfiguration('interp_mode'),
             'interp_steps': ParameterValue(LaunchConfiguration('interp_steps'), value_type=int),
-            # 전처리 scan 은 RViz 확인용이라 RViz 를 띄울 때만 발행 (추론에는 쓰이지 않음)
-            'publish_preprocess_scan': ParameterValue(use_rviz, value_type=bool),
+            # 전처리 scan 은 모델 입력 및 RViz 확인용 (기본: 발행 켜짐)
+            'publish_preprocess_scan': ParameterValue(LaunchConfiguration('publish_preprocess_scan'), value_type=bool),
             'diag': {
                 'timing': ParameterValue(LaunchConfiguration('timing_diag'), value_type=bool),
                 'scan_qos_depth': ParameterValue(LaunchConfiguration('scan_qos_depth'), value_type=int),
@@ -161,6 +170,8 @@ def generate_launch_description():
         timing_diag_arg,
         scan_qos_depth_arg,
         legacy_callback_groups_arg,
+        filter_arg,
+        publish_preprocess_scan_arg,
         record_bag_arg,
         agent_node,
         rviz_node,

@@ -53,6 +53,10 @@ def generate_launch_description():
         'interp_steps', default_value='4',
         description='선형 보간 램프 스텝 수 (기본값: 4)'
     )
+    filter_arg = DeclareLaunchArgument(
+        'filter', default_value='true',
+        description='LiDAR 2중벽 시공간 필터 적용 여부 (기본: true)'
+    )
     x_arg = DeclareLaunchArgument('x', default_value='6.4', description='car1 스폰 X')
     y_arg = DeclareLaunchArgument('y', default_value='16.0', description='car1 스폰 Y')
     yaw_arg = DeclareLaunchArgument('yaw', default_value='-90.0', description='car1 스폰 Yaw 각도(deg)')
@@ -80,7 +84,7 @@ def generate_launch_description():
     all_launch_args = [
         map_arg, raceline_arg,
         namespace_arg, head2head_arg, model_path_arg, use_norm_arg,
-        model_rate_hz_arg, interp_mode_arg, interp_steps_arg,
+        model_rate_hz_arg, interp_mode_arg, interp_steps_arg, filter_arg,
         x_arg, y_arg, yaw_arg, x2_arg, y2_arg, yaw2_arg
     ]
 
@@ -192,6 +196,7 @@ def generate_launch_description():
             'model_rate_hz': PythonExpression(["float('", model_rate_hz, "')"]),
             'interp_mode': interp_mode,
             'interp_steps': PythonExpression(["int('", interp_steps, "')"]),
+            'filter': ParameterValue(LaunchConfiguration('filter'), value_type=bool),
         }]
     )
 
