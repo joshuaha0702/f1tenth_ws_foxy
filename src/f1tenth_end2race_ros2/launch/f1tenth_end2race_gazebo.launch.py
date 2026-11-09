@@ -57,6 +57,18 @@ def generate_launch_description():
         'filter', default_value='true',
         description='LiDAR 2중벽 시공간 필터 적용 여부 (기본: true)'
     )
+    min_speed_arg = DeclareLaunchArgument(
+        'min_speed', default_value='0.0',
+        description='End2Race 제어 최저 속도 [m/s] (기본: 0.0, car166 모델은 0.5)'
+    )
+    max_speed_arg = DeclareLaunchArgument(
+        'max_speed', default_value='2.0',
+        description='End2Race 제어 최고 속도 [m/s] (기본: 2.0)'
+    )
+    max_steer_arg = DeclareLaunchArgument(
+        'max_steer', default_value='0.28',
+        description='End2Race 제어 최대 조향각 [rad] (실차 166번=0.28, 이전 시뮬=0.52)'
+    )
     x_arg = DeclareLaunchArgument('x', default_value='6.4', description='car1 스폰 X')
     y_arg = DeclareLaunchArgument('y', default_value='16.0', description='car1 스폰 Y')
     yaw_arg = DeclareLaunchArgument('yaw', default_value='-90.0', description='car1 스폰 Yaw 각도(deg)')
@@ -85,6 +97,7 @@ def generate_launch_description():
         map_arg, raceline_arg,
         namespace_arg, head2head_arg, model_path_arg, use_norm_arg,
         model_rate_hz_arg, interp_mode_arg, interp_steps_arg, filter_arg,
+        min_speed_arg, max_speed_arg, max_steer_arg,
         x_arg, y_arg, yaw_arg, x2_arg, y2_arg, yaw2_arg
     ]
 
@@ -197,6 +210,12 @@ def generate_launch_description():
             'interp_mode': interp_mode,
             'interp_steps': PythonExpression(["int('", interp_steps, "')"]),
             'filter': ParameterValue(LaunchConfiguration('filter'), value_type=bool),
+            'control': {
+                'min_speed': ParameterValue(LaunchConfiguration('min_speed'), value_type=float),
+                'max_speed': ParameterValue(LaunchConfiguration('max_speed'), value_type=float),
+                'max_steer': ParameterValue(LaunchConfiguration('max_steer'), value_type=float),
+                'min_steer': PythonExpression(["-float('", LaunchConfiguration('max_steer'), "')"]),
+            },
         }]
     )
 

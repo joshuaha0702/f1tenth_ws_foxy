@@ -14,7 +14,7 @@
       max_steer: 0.28
       min_steer: -0.28
       max_speed: 2.0
-      min_speed: 0.5
+      min_speed: 0.0
       speed_scale: 1.0  # 1.0이 원본 속도, 0.5는 절반 속도
 
     environment:

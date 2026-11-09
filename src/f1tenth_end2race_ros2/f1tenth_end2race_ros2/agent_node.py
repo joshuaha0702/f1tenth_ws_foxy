@@ -18,7 +18,7 @@ from .model import End2Race, End2RaceNorm, speed_dims_from_state_dict, hidden_sc
 from .scan_preprocess import build_scan_mapping, pool_scan, SpatioTemporalScanFilter
 
 class End2RaceAgent(Node):
-    def __init__(self, cli_filter=None):
+    def __init__(self, cli_overrides=None):
         super().__init__('end2race_node')
         
         # 1. 파라미터 선언
@@ -28,7 +28,7 @@ class End2RaceAgent(Node):
         self.declare_parameter('control.max_steer', 0.28)
         self.declare_parameter('control.min_steer', -0.28)
         self.declare_parameter('control.max_speed', 2.0)
-        self.declare_parameter('control.min_speed', 0.5)
+        self.declare_parameter('control.min_speed', 0.0)
         self.declare_parameter('control.speed_scale', 1.0)
         self.declare_parameter('control.initial_speed', 0.0)
         self.declare_parameter('filter', True)
@@ -76,10 +76,25 @@ class End2RaceAgent(Node):
         self.robot_name = self.get_parameter('robot_name').value
         self.model_path = self.get_parameter('model_path').value
         self.hidden_scale = self.get_parameter('hidden_scale').value
-        self.max_steer = self.get_parameter('control.max_steer').value
-        self.min_steer = self.get_parameter('control.min_steer').value
-        self.max_speed = self.get_parameter('control.max_speed').value
+        self.max_steer = float(self.get_parameter('control.max_steer').value)
+        self.min_steer = float(self.get_parameter('control.min_steer').value)
+        self.max_speed = float(self.get_parameter('control.max_speed').value)
         self.min_speed = float(self.get_parameter('control.min_speed').value)
+
+        # CLI 인자 오버라이드 반영
+        if cli_overrides:
+            if cli_overrides.get('min_speed') is not None:
+                self.min_speed = float(cli_overrides['min_speed'])
+            if cli_overrides.get('max_speed') is not None:
+                self.max_speed = float(cli_overrides['max_speed'])
+            if cli_overrides.get('max_steer') is not None:
+                self.max_steer = float(cli_overrides['max_steer'])
+                self.min_steer = -self.max_steer
+
+        self.get_logger().info(
+            f"[{self.robot_name}] 제어 물리 한계: speed=[{self.min_speed:.2f}, {self.max_speed:.2f}] m/s, "
+            f"steer=[{self.min_steer:.3f}, {self.max_steer:.3f}] rad"
+        )
         self.speed_scale = self.get_parameter('control.speed_scale').value
         self.initial_speed = float(self.get_parameter('control.initial_speed').value)
         self.fov_min = self.get_parameter('lidar.fov_min').value
@@ -208,6 +223,7 @@ class End2RaceAgent(Node):
 
         # 공간-시간 연속성 기반 2중벽 제거 필터
         param_filter = bool(self.get_parameter('filter').value)
+        cli_filter = cli_overrides.get('filter') if cli_overrides else None
         self.use_scan_filter = cli_filter if cli_filter is not None else param_filter
         self.get_logger().info(f"[{self.robot_name}] LiDAR 2중벽 시공간 필터 적용: {self.use_scan_filter}")
 
@@ -684,22 +700,31 @@ class End2RaceAgent(Node):
         self.drive_pub.publish(drive_msg)
         self._last_drive_wall = time.monotonic()
 
-def _parse_filter_cli(argv):
+def _parse_cli_args(argv):
     import argparse
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument('--filter', type=str, default=None)
+    parser.add_argument('--min_speed', type=float, default=None)
+    parser.add_argument('--max_speed', type=float, default=None)
+    parser.add_argument('--max_steer', type=float, default=None)
     parsed, remaining = parser.parse_known_args(argv)
     filter_val = None
     if parsed.filter is not None:
         filter_val = parsed.filter.lower() in ('true', '1', 'yes', 't')
-    return filter_val, remaining
+    cli_overrides = {
+        'filter': filter_val,
+        'min_speed': parsed.min_speed,
+        'max_speed': parsed.max_speed,
+        'max_steer': parsed.max_steer,
+    }
+    return cli_overrides, remaining
 
 def main(args=None):
     import sys
     raw_args = sys.argv[1:] if args is None else list(args)
-    cli_filter, ros_args = _parse_filter_cli(raw_args)
+    cli_overrides, ros_args = _parse_cli_args(raw_args)
     rclpy.init(args=ros_args)
-    node = End2RaceAgent(cli_filter=cli_filter)
+    node = End2RaceAgent(cli_overrides=cli_overrides)
     executor = MultiThreadedExecutor()
     node.executor_threads = getattr(getattr(executor, '_executor', None), '_max_workers', 0) or 0
     executor.add_node(node)

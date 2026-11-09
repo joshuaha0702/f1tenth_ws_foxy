@@ -32,6 +32,18 @@ def generate_launch_description():
         'steer_lpf_tau', default_value='0.0',
         description='agent_node control.steer_lpf_tau (조향 출력 저역통과, s). 0이면 원본 출력'
     )
+    min_speed_arg = DeclareLaunchArgument(
+        'min_speed', default_value='0.0',
+        description='End2Race 제어 최저 속도 [m/s] (기본: 0.0, car166 모델은 0.5)'
+    )
+    max_speed_arg = DeclareLaunchArgument(
+        'max_speed', default_value='2.0',
+        description='End2Race 제어 최고 속도 [m/s] (기본: 2.0)'
+    )
+    max_steer_arg = DeclareLaunchArgument(
+        'max_steer', default_value='0.28',
+        description='End2Race 제어 최대 조향각 [rad] (실차 166번=0.28, 이전 시뮬=0.52)'
+    )
     speed_input_arg = DeclareLaunchArgument(
         'speed_input', default_value='command',
         description='모델 속도 입력: command(직전 출력 명령) / odom(/odom 측정 속도) / hybrid([odom, 직전 출력]) / '
@@ -101,7 +113,13 @@ def generate_launch_description():
             'robot_name': namespace,
             'speed_input': LaunchConfiguration('speed_input'),
             'filter': ParameterValue(LaunchConfiguration('filter'), value_type=bool),
-            'control': {'steer_lpf_tau': ParameterValue(LaunchConfiguration('steer_lpf_tau'), value_type=float)},
+            'control': {
+                'steer_lpf_tau': ParameterValue(LaunchConfiguration('steer_lpf_tau'), value_type=float),
+                'min_speed': ParameterValue(LaunchConfiguration('min_speed'), value_type=float),
+                'max_speed': ParameterValue(LaunchConfiguration('max_speed'), value_type=float),
+                'max_steer': ParameterValue(LaunchConfiguration('max_steer'), value_type=float),
+                'min_steer': PythonExpression(["-float('", LaunchConfiguration('max_steer'), "')"]),
+            },
             'use_norm': use_norm,
             'model_rate_hz': ParameterValue(LaunchConfiguration('model_rate_hz'), value_type=float),
             'interp_mode': LaunchConfiguration('interp_mode'),
@@ -162,6 +180,9 @@ def generate_launch_description():
         model_path_arg,
         speed_input_arg,
         steer_lpf_tau_arg,
+        min_speed_arg,
+        max_speed_arg,
+        max_steer_arg,
         use_norm_arg,
         model_rate_hz_arg,
         interp_mode_arg,

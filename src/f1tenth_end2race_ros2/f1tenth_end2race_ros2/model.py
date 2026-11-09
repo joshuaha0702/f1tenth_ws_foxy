@@ -219,7 +219,7 @@ class End2RaceNorm(nn.Module):
     """
 
     def __init__(self, mask_prob=0.0, hidden_scale=4, speed_dims=1,
-                 max_steer=0.28, max_speed=2.0, min_speed=0.5):
+                 max_steer=0.28, max_speed=2.0, min_speed=0.0):
         super(End2RaceNorm, self).__init__()
 
         # 물리 제약 상수 (정규화/역정규화용)
