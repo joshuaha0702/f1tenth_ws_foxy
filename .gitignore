@@ -21,6 +21,9 @@ __pycache__/
 
 # data
 bags/
+bags_lfs/
+*.db3-shm
+*.db3-wal
 f1tenth_data/
 data/
 # LiDAR test data
