@@ -14,7 +14,8 @@ from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import Odometry
 from std_msgs.msg import String, Float64MultiArray, MultiArrayDimension
 from ackermann_msgs.msg import AckermannDriveStamped
-from .model import End2Race, End2RaceNorm, speed_dims_from_state_dict, hidden_scale_from_state_dict
+from .model import (End2Race, End2RaceMLP, End2RaceNorm, is_mlp_state_dict,
+                    speed_dims_from_state_dict, hidden_scale_from_state_dict)
 from .scan_preprocess import build_scan_mapping, pool_scan, SpatioTemporalScanFilter
 
 class End2RaceAgent(Node):
@@ -159,7 +160,9 @@ class End2RaceAgent(Node):
                                f"'{self.speed_input}'(폭 {expected_dims})과 맞지 않습니다: {self.model_path}")
 
         # GRU 크기(hidden_scale)도 체크포인트의 gru.weight_hh_l0 에서 읽는다 (파라미터는 참고용)
-        ckpt_hidden_scale = hidden_scale_from_state_dict(state)
+        # MLP 어블레이션 모델(End2RaceMLP)은 GRU 가 없으므로 건너뛴다
+        is_mlp = is_mlp_state_dict(state)
+        ckpt_hidden_scale = self.hidden_scale if is_mlp else hidden_scale_from_state_dict(state)
         if ckpt_hidden_scale != self.hidden_scale:
             self.get_logger().warn(f"[{self.robot_name}] 체크포인트 hidden_scale={ckpt_hidden_scale}, "
                                    f"파라미터 {self.hidden_scale} 무시")
@@ -174,7 +177,12 @@ class End2RaceAgent(Node):
         else:  # 'auto'
             self.is_norm_model = ('feature_norm.weight' in state)
 
-        if self.is_norm_model:
+        if is_mlp:
+            self.model = End2RaceMLP.from_state_dict(state).to(self.device)
+            self.get_logger().info(f"[{self.robot_name}] [MLP 어블레이션 모델] End2RaceMLP 로드 성공 "
+                                   f"(stack {self.model.stack_frames}×{self.model.stack_stride}, "
+                                   f"width {self.model.mlp[0].out_features}): {self.model_path}")
+        elif self.is_norm_model:
             self.model = End2RaceNorm(
                 hidden_scale=self.hidden_scale,
                 speed_dims=speed_dims,

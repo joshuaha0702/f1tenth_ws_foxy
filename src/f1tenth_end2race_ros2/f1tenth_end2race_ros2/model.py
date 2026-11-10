@@ -136,6 +136,91 @@ class End2Race(nn.Module):
         return actions, next_hidden
 
 
+def is_mlp_state_dict(state_dict) -> bool:
+    """End2RaceMLP 체크포인트 여부 (GRU 대신 mlp.* 가중치)."""
+    return "mlp.0.weight" in state_dict
+
+
+class End2RaceMLP(End2Race):
+    """어블레이션용: End2Race 의 GRU 를 MLP 3층으로 바꾼 모델 (나머지 전처리·속도 임베딩·출력층 동일).
+
+    stack_frames K > 1 이면 현재 scan 과 stack_stride 행 간격의 과거 scan K-1 장을 이어 붙여 입력한다
+    (100 Hz 행 기준 stride 10 = 0.1 s). 과거 scan 버퍼를 hidden 자리로 주고받으므로 train.py 와
+    agent_node 의 hidden 처리를 그대로 쓴다. 버퍼가 없을 때(에피소드 시작)는 첫 scan 을 복제해 채운다.
+    K = 1 이면 메모리 없는 단일 프레임 MLP (hidden 은 항상 None).
+    """
+
+    def __init__(self, mask_prob=0.0, speed_dims=1, mlp_width=2176, stack_frames=1, stack_stride=10):
+        nn.Module.__init__(self)
+        self.num_features = 360
+        self.num_actions = 2
+        self.mask_prob = mask_prob
+        self.speed_dims = speed_dims
+        self.stack_frames = int(stack_frames)
+        self.stack_stride = int(stack_stride)
+        self.hist_len = (self.stack_frames - 1) * self.stack_stride
+        # 체크포인트에 스택 설정을 남겨 agent_node 가 읽게 한다
+        self.register_buffer("stack_cfg", torch.tensor([self.stack_frames, self.stack_stride]))
+
+        k_init = (-1 / 10.0) * torch.log(torch.tensor(0.01) / (2 - torch.tensor(0.01)))
+        self.k = nn.Parameter(torch.full((self.num_features,), k_init.item()))
+        self.speed_mlp = (nn.Sequential(nn.Linear(speed_dims, self.num_features // 6), nn.ReLU())
+                          if speed_dims > 0 else None)
+        self.dummy_embedding = nn.Parameter(torch.randn(1, self.num_features // 6))
+
+        in_features = self.num_features * self.stack_frames + self.num_features // 6
+        self.mlp = nn.Sequential(
+            nn.Linear(in_features, mlp_width), nn.ReLU(),
+            nn.Linear(mlp_width, mlp_width), nn.ReLU(),
+            nn.Linear(mlp_width, mlp_width), nn.ReLU(),
+        )
+        processed_features = self.num_features + self.num_features // 6
+        self.output_layer = nn.Sequential(
+            nn.Linear(mlp_width, processed_features),
+            nn.ReLU(),
+            nn.Linear(processed_features, self.num_actions)
+        )
+        self._initialize_parameters()
+
+    @classmethod
+    def from_state_dict(cls, state_dict, **kwargs):
+        frames, stride = (int(v) for v in state_dict["stack_cfg"].tolist())
+        return cls(speed_dims=speed_dims_from_state_dict(state_dict),
+                   mlp_width=int(state_dict["mlp.0.weight"].shape[0]),
+                   stack_frames=frames, stack_stride=stride, **kwargs)
+
+    def forward(self, x: torch.Tensor, speed_input: Optional[torch.Tensor] = None,
+                hidden: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        processed_lidar = (-1 / (1 + torch.exp(-self.k * x)) + 1) * 2
+
+        batch_size, seq_len, _ = x.shape
+        if self.speed_mlp is None:
+            speed_embedding = self.dummy_embedding.expand(batch_size, seq_len, -1)
+        else:
+            speed_embedding = self.speed_mlp(speed_input)
+        if self.speed_mlp is not None and self.training and self.mask_prob > 0:
+            mask = torch.rand(batch_size, seq_len, 1, device=speed_input.device) < self.mask_prob
+            mask_batch = self.dummy_embedding.expand(batch_size, seq_len, -1)
+            speed_embedding = torch.where(mask, mask_batch, speed_embedding)
+
+        # 프레임 스택: hidden = 직전 hist_len 행의 전처리 scan [B, hist_len, 360]
+        P = self.hist_len
+        if P > 0:
+            hist = processed_lidar[:, :1].expand(-1, P, -1) if hidden is None else hidden
+            full = torch.cat([hist, processed_lidar], dim=1)
+            frames = [full[:, P - j * self.stack_stride:P - j * self.stack_stride + seq_len]
+                      for j in range(self.stack_frames)]
+            lidar_features = torch.cat(frames, dim=2)
+            next_hidden = full[:, -P:]
+        else:
+            lidar_features = processed_lidar
+            next_hidden = None
+
+        features = torch.cat([lidar_features, speed_embedding], dim=2)
+        actions = self.output_layer(self.mlp(features))
+        return actions, next_hidden
+
+
 class End2RaceWithDelay(nn.Module):
     def __init__(self, mask_prob=0.0, hidden_scale=4):
         super(End2RaceWithDelay, self).__init__()
