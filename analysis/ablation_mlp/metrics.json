@@ -1,0 +1,150 @@
+{
+ "episodes": {
+  "std": {
+   "ego_p09": {
+    "n": 200,
+    "reach1": 174,
+    "along": 153,
+    "overtake": 149,
+    "cf_overtake": 136,
+    "car_coll": 14,
+    "any_coll": 14,
+    "follow": 51,
+    "t_overtake_med": 6.25,
+    "final_gap_nonot_med": 2.376706600189209
+   },
+   "ego_mlp5": {
+    "n": 200,
+    "reach1": 148,
+    "along": 110,
+    "overtake": 108,
+    "cf_overtake": 106,
+    "car_coll": 7,
+    "any_coll": 7,
+    "follow": 112,
+    "t_overtake_med": 7.669999837875366,
+    "final_gap_nonot_med": 2.1992080211639404
+   },
+   "ego_mlp1": {
+    "n": 200,
+    "reach1": 89,
+    "along": 75,
+    "overtake": 73,
+    "cf_overtake": 71,
+    "car_coll": 2,
+    "any_coll": 2,
+    "follow": 138,
+    "t_overtake_med": 7.550000190734863,
+    "final_gap_nonot_med": 2.200000047683716
+   },
+   "lattice": {
+    "n": 200,
+    "reach1": 166,
+    "along": 123,
+    "overtake": 115,
+    "cf_overtake": 110,
+    "car_coll": 19,
+    "any_coll": 19,
+    "follow": 127,
+    "t_overtake_med": 8.550000190734863,
+    "final_gap_nonot_med": 2.1968345642089844
+   }
+  },
+  "nar": {
+   "ego_p09": {
+    "n": 100,
+    "reach1": 89,
+    "along": 87,
+    "overtake": 86,
+    "cf_overtake": 63,
+    "car_coll": 22,
+    "any_coll": 24,
+    "follow": 9,
+    "t_overtake_med": 5.990000009536743,
+    "final_gap_nonot_med": 2.3000000715255737
+   },
+   "ego_mlp5": {
+    "n": 100,
+    "reach1": 36,
+    "along": 24,
+    "overtake": 24,
+    "cf_overtake": 19,
+    "car_coll": 5,
+    "any_coll": 6,
+    "follow": 79,
+    "t_overtake_med": 6.110000133514404,
+    "final_gap_nonot_med": 2.1995184421539307
+   },
+   "ego_mlp1": {
+    "n": 100,
+    "reach1": 8,
+    "along": 3,
+    "overtake": 3,
+    "cf_overtake": 2,
+    "car_coll": 2,
+    "any_coll": 2,
+    "follow": 95,
+    "t_overtake_med": 3.509999990463257,
+    "final_gap_nonot_med": 2.200000047683716
+   },
+   "lattice": {
+    "n": 100,
+    "reach1": 36,
+    "along": 18,
+    "overtake": 18,
+    "cf_overtake": 14,
+    "car_coll": 10,
+    "any_coll": 10,
+    "follow": 90,
+    "t_overtake_med": 6.859999895095825,
+    "final_gap_nonot_med": 2.1997586488723755
+   }
+  }
+ },
+ "solo": {
+  "ego_p09": {
+   "eps": 50,
+   "coll": 0,
+   "mean_v": 1.99,
+   "v_wall_close": 2.0
+  },
+  "ego_mlp5": {
+   "eps": 50,
+   "coll": 0,
+   "mean_v": 1.99,
+   "v_wall_close": 2.0
+  },
+  "ego_mlp1": {
+   "eps": 50,
+   "coll": 0,
+   "mean_v": 1.985,
+   "v_wall_close": 2.0
+  },
+  "lattice": {
+   "eps": 50,
+   "coll": 0,
+   "mean_v": 1.99,
+   "v_wall_close": 2.0
+  }
+ },
+ "fisher_p_vs_gru": {
+  "std:ego_mlp5:cf_overtake": 0.002959637637053206,
+  "std:ego_mlp5:car_coll": 0.17741308261074717,
+  "std:ego_mlp5:follow": 7.25278642916957e-10,
+  "std:ego_mlp1:cf_overtake": 1.0493767227672304e-10,
+  "std:ego_mlp1:car_coll": 0.0035085938263136633,
+  "std:ego_mlp1:follow": 2.022337530093987e-18,
+  "std:lattice:cf_overtake": 0.010095055403438582,
+  "std:lattice:car_coll": 0.4677550793774619,
+  "std:lattice:follow": 2.1106479552916815e-14,
+  "nar:ego_mlp5:cf_overtake": 2.944382286218934e-10,
+  "nar:ego_mlp5:car_coll": 0.0006767690633096161,
+  "nar:ego_mlp5:follow": 3.701990122167494e-25,
+  "nar:ego_mlp1:cf_overtake": 9.638420859792994e-23,
+  "nar:ego_mlp1:car_coll": 1.210048629643878e-05,
+  "nar:ego_mlp1:follow": 3.728285723925791e-39,
+  "nar:lattice:cf_overtake": 7.442189264068315e-13,
+  "nar:lattice:car_coll": 0.03269214658288657,
+  "nar:lattice:follow": 7.425423531555342e-34
+ }
+}

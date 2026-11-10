@@ -1,0 +1,6 @@
+Freeform_n04       n= 20 | overtake  30.0% (collision-free  15.0%) | collision car  15.0%, wall ego  0.0% leader  0.0% | ego stuck  0.0%, speed 1.40 m/s | leader stuck  0.0%, speed 0.91 m/s
+Simple_n04         n= 20 | overtake  45.0% (collision-free  40.0%) | collision car   5.0%, wall ego  0.0% leader  0.0% | ego stuck  0.0%, speed 1.47 m/s | leader stuck  0.0%, speed 0.95 m/s
+Spline_n04         n= 20 | overtake  15.0% (collision-free  15.0%) | collision car   0.0%, wall ego  0.0% leader  0.0% | ego stuck  0.0%, speed 1.22 m/s | leader stuck  0.0%, speed 0.91 m/s
+Spline_w16_04      n= 20 | overtake   5.0% (collision-free   5.0%) | collision car   0.0%, wall ego  0.0% leader  0.0% | ego stuck  0.0%, speed 1.14 m/s | leader stuck  0.0%, speed 0.91 m/s
+Spline_w24_04      n= 20 | overtake  25.0% (collision-free  20.0%) | collision car   5.0%, wall ego  0.0% leader  0.0% | ego stuck  0.0%, speed 1.36 m/s | leader stuck  0.0%, speed 0.91 m/s
+ALL                n=100 | overtake  24.0% (collision-free  19.0%) | collision car   5.0%, wall ego  0.0% leader  0.0% | ego stuck  0.0%, speed 1.32 m/s | leader stuck  0.0%, speed 0.92 m/s

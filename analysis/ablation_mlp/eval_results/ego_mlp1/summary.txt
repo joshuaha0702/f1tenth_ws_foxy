@@ -1,0 +1,11 @@
+Freeform_f04       n= 20 | overtake  10.0% (collision-free  10.0%) | collision car   0.0%, wall ego  0.0% leader  0.0% | ego stuck  0.0%, speed 1.20 m/s | leader stuck  0.0%, speed 0.90 m/s
+Freeform_f10       n= 20 | overtake  20.0% (collision-free  20.0%) | collision car   0.0%, wall ego  0.0% leader  0.0% | ego stuck  0.0%, speed 1.26 m/s | leader stuck  0.0%, speed 0.94 m/s
+Freeform_f16       n= 20 | overtake  20.0% (collision-free  20.0%) | collision car   0.0%, wall ego  0.0% leader  0.0% | ego stuck  0.0%, speed 1.29 m/s | leader stuck  0.0%, speed 0.91 m/s
+Simple             n= 20 | overtake  30.0% (collision-free  30.0%) | collision car   0.0%, wall ego  0.0% leader  0.0% | ego stuck  0.0%, speed 1.42 m/s | leader stuck  0.0%, speed 0.91 m/s
+Simple_augmented   n= 20 | overtake  70.0% (collision-free  70.0%) | collision car   0.0%, wall ego  0.0% leader  0.0% | ego stuck  0.0%, speed 1.68 m/s | leader stuck  0.0%, speed 0.95 m/s
+Simple_v07         n= 20 | overtake  60.0% (collision-free  55.0%) | collision car   5.0%, wall ego  0.0% leader  0.0% | ego stuck  0.0%, speed 1.67 m/s | leader stuck  0.0%, speed 0.99 m/s
+Simple_v12         n= 20 | overtake  70.0% (collision-free  70.0%) | collision car   0.0%, wall ego  0.0% leader  0.0% | ego stuck  0.0%, speed 1.63 m/s | leader stuck  0.0%, speed 0.89 m/s
+Simple_v15         n= 20 | overtake  60.0% (collision-free  60.0%) | collision car   0.0%, wall ego  0.0% leader  0.0% | ego stuck  0.0%, speed 1.63 m/s | leader stuck  0.0%, speed 0.98 m/s
+Spline_s04         n= 20 | overtake   5.0% (collision-free   5.0%) | collision car   0.0%, wall ego  0.0% leader  0.0% | ego stuck  0.0%, speed 1.11 m/s | leader stuck  0.0%, speed 0.90 m/s
+Spline_s10         n= 20 | overtake  20.0% (collision-free  15.0%) | collision car   5.0%, wall ego  0.0% leader  0.0% | ego stuck  0.0%, speed 1.32 m/s | leader stuck  0.0%, speed 0.98 m/s
+ALL                n=200 | overtake  36.5% (collision-free  35.5%) | collision car   1.0%, wall ego  0.0% leader  0.0% | ego stuck  0.0%, speed 1.42 m/s | leader stuck  0.0%, speed 0.93 m/s
