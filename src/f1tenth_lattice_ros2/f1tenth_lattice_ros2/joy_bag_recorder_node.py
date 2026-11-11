@@ -42,6 +42,8 @@ class JoyBagRecorderNode(Node):
         self.declare_parameter('output_dir', 'bags')
         self.declare_parameter('record_queue_depth', 1000)
         self.declare_parameter('record_tf', False)
+        self.declare_parameter('autostart', False)
+        self.declare_parameter('autostart_mode', 'solo')
 
         self.start_button = int(self.get_parameter('start_button').value)
         self.comp_start_button = int(self.get_parameter('comp_start_button').value)
@@ -52,6 +54,8 @@ class JoyBagRecorderNode(Node):
         self.output_dir = str(self.get_parameter('output_dir').value)
         self.record_queue_depth = int(self.get_parameter('record_queue_depth').value)
         self.record_tf = bool(self.get_parameter('record_tf').value)
+        self.autostart = bool(self.get_parameter('autostart').value)
+        self.autostart_mode = str(self.get_parameter('autostart_mode').value).lower()
 
         self.model_tag = self._resolve_model_tag()
 
@@ -93,6 +97,12 @@ class JoyBagRecorderNode(Node):
             10
         )
 
+        # 명령어로 처음부터 자동 녹화 시작 옵션 (autostart=True)
+        self._autostart_timer = None
+        if self.autostart:
+            self.get_logger().info(f"⚡ [JoyBagRecorder] autostart=True 설정됨: 0.5초 후 자동으로 {self.autostart_mode.upper()} 녹화를 시작합니다.")
+            self._autostart_timer = self.create_timer(0.5, self._on_autostart_timer)
+
         self.get_logger().info("==========================================================")
         self.get_logger().info(f"🎮 [JoyBagRecorder] Ready. (모델/태그: {self.model_tag or '없음'})")
         self.get_logger().info(f"   - [{self.start_button}번 버튼] 누르면 -> 단일(solo) 녹화 시작 (START SOLO)")
@@ -101,6 +111,15 @@ class JoyBagRecorderNode(Node):
         self.get_logger().info(f"   - 녹화 토픽: {', '.join(self.record_topics)}")
         self.get_logger().info(f"   - QoS 수신 큐 깊이: {self.record_queue_depth} (드롭 방지 적용)")
         self.get_logger().info("==========================================================")
+
+    def _on_autostart_timer(self):
+        if self._autostart_timer is not None:
+            self._autostart_timer.cancel()
+            self._autostart_timer = None
+        if not self.is_recording:
+            mode = self.autostart_mode if self.autostart_mode in ('solo', 'comp') else 'solo'
+            self.get_logger().info(f"🔴 [JoyBagRecorder] autostart 타이머 발동: {mode.upper()} 녹화를 시작합니다.")
+            self.start_recording(mode=mode)
 
     def _resolve_model_tag(self) -> str:
         name = self.model_name.strip()

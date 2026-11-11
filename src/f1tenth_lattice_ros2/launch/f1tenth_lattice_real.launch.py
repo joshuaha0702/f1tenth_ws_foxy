@@ -256,7 +256,19 @@ def generate_launch_description():
         default_value='true',
         description='Enable joy_bag_recorder_node for joystick triggered ros2 bag recording'
     )
+    autostart_record_arg = DeclareLaunchArgument(
+        'autostart_record',
+        default_value='false',
+        description='Launch 시작 즉시 조이스틱 대기 없이 bag 녹화 자동 시작 (true/false, 기본: false)'
+    )
+    record_mode_arg = DeclareLaunchArgument(
+        'record_mode',
+        default_value='solo',
+        description='autostart_record 시 녹화 모드 (solo 또는 comp, 기본값: solo)'
+    )
     record_bag = LaunchConfiguration('record_bag')
+    autostart_record = LaunchConfiguration('autostart_record')
+    record_mode = LaunchConfiguration('record_mode')
 
     joy_bag_recorder_node = Node(
         package='f1tenth_lattice_ros2',
@@ -269,7 +281,9 @@ def generate_launch_description():
             'stop_button': 6,        # 6번 버튼: 녹화 중지 (공통)
             'bag_prefix': 'f1tenth_run',
             'model_name': 'lattice',
-            'output_dir': 'bags'
+            'output_dir': 'bags',
+            'autostart': ParameterValue(autostart_record, value_type=bool),
+            'autostart_mode': record_mode,
         }],
         condition=IfCondition(record_bag)
     )
@@ -306,5 +320,7 @@ def generate_launch_description():
         opponent_weight_arg,
         use_global_loc_arg,
         record_bag_arg,
+        autostart_record_arg,
+        record_mode_arg,
         real_nodes_group
     ])
