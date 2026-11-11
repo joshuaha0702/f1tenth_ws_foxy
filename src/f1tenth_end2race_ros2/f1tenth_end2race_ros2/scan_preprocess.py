@@ -18,67 +18,73 @@ MAX_RANGE = 30.0
 
 
 class SpatioTemporalScanFilter:
-    """공간-시간 연속성 기반 라이다 2중벽(외벽 투과 및 코너 튐) 제거 필터.
+    """에지 검출 기반 국소 선형 보간 라이다 2중벽(외벽 투과 및 월담) 제거 필터 (Zero-Lag).
 
-    - 롤링/피칭 시 트랙 배리어(15~20cm) 위로 광선이 넘어가 3.5m~18m의 연구실 건물 외벽을 때리는
-      2중벽(Double Wall) 이상치를 감지하여 인접한 실제 배리어 라인으로 연속 복원한다.
-    - 정면(±10° 이내) 직선로 시야(최대 6m)는 100% 보존하여 최고속 주행을 유지하고,
-      측면 및 전방 우측/좌측 코너(-10° ~ -100°)의 누출 빔만 핀포인트로 필터링한다.
-    - 벽이나 장애물이 다가오는 신호(closer)는 지연 시간 0ms로 즉각 반영(Zero Lag)한다.
+    - 롤링/피칭 시 15~20cm 폼 배리어 위로 광선이 넘어가 3.5m~18m의 연구실 외벽을 때리는
+      월담 펄스(_|==|_) 이상치를 에지 검출로 감지.
+    - Positive Edge(_|) 시작점과 Negative Edge(|_) 종료점 사이의 튀어버린 외벽 빔들을
+      양단 정상 배리어 거리(r_left, r_right)로 국소 선형 보간(Linear Interpolation)하여 즉시 복원.
+    - 시간 평활화(EMA)를 사용하지 않아 위상지연이 0ms이며,
+      완만한 실제 트랙 코너 및 직선로는 에지가 발생하지 않으므로 원형 그대로 100% 보존.
     """
 
     def __init__(self, num_bins=NUM_FEATURES, fov_min=FOV_MIN, fov_max=FOV_MAX,
-                 a=6.0, b=2.2, alpha=0.85):
+                 a=6.0, b=2.2, alpha=0.85, jump_thresh=1.2, max_barrier_dist=3.2, **kwargs):
         self.num_bins = num_bins
         self.fov_min = fov_min
         self.fov_max = fov_max
-        self.a = float(a)          # 전방 최대 시야 포락선 장축 (m)
-        self.b = float(b)          # 측면 트랙 한계 포락선 단축 (m)
-        self.alpha = float(alpha)  # 시간적 평활 가중치
-
-        # 360 각도 및 타원형 포락선 사전 계산
+        self.jump_thresh = float(jump_thresh)          # 배리어 월담 스텝 점프 임계값 (m)
+        self.max_barrier_dist = float(max_barrier_dist) # 배리어로 인정 가능한 최대 거리 (m)
         self.angles = np.linspace(fov_min, fov_max, num_bins)
-        cos_a = np.cos(self.angles)
-        sin_a = np.sin(self.angles)
-        self.ellipse_r = (self.a * self.b) / np.sqrt((self.b * cos_a) ** 2 + (self.a * sin_a) ** 2)
-
-        # 전방 코너 및 측면 검사 마스크 (±10° ~ ±100°)
-        self.ext_right = (self.angles < -0.1745) & (self.angles > -1.7453)
-        self.ext_left = (self.angles > 0.1745) & (self.angles < 1.7453)
-
-        self.prev_filtered = None
 
     def reset(self):
-        """에피소드 시작/정지 시 이전 필터 상태 초기화."""
-        self.prev_filtered = None
+        """에피소드 시작/정지 시 필터 상태 초기화 (단일 프레임 처리로 무상태)."""
+        pass
 
     def filter(self, scan_features: np.ndarray) -> np.ndarray:
-        """360-feature 라이다 배열을 입력받아 2중벽 이상치를 제거한 배열을 반환."""
-        scan_features = np.asarray(scan_features, dtype=np.float64)
-        if self.prev_filtered is None:
-            self.prev_filtered = np.copy(scan_features)
-            return np.copy(scan_features)
+        """360-feature 라이다 배열을 입력받아 월담 펄스를 에지 보간하여 반환 (Zero-Lag)."""
+        scan = np.asarray(scan_features, dtype=np.float64)
+        filt = np.copy(scan)
+        n = len(filt)
 
-        filtered = np.copy(scan_features)
+        # 1. Forward Scan: Positive Edge (_|) 감지 후 Negative Edge (|_) 탐색
+        i = 1
+        while i < n - 1:
+            # Positive edge: 배리어(< max_barrier_dist)에서 외벽(jump_thresh 이상 폭등)으로 점프
+            if filt[i] - filt[i - 1] > self.jump_thresh and filt[i - 1] < self.max_barrier_dist:
+                start_idx = i
+                r_left = filt[i - 1]
+                end_idx = None
+                r_right = r_left
 
-        for mask in (self.ext_right, self.ext_left):
-            # 1. [공간 참조]: 같은 프레임 내에서 실제 배리어(< ellipse_r)를 정상 감지 중인 빔 탐색
-            valid_b = filtered[mask & (filtered < self.ellipse_r)]
-            if len(valid_b) >= 10:
-                ref_b = float(np.median(valid_b))
+                # 이후 하강 에지 (외벽 -> 배리어 복귀) 탐색
+                for j in range(i, n - 1):
+                    if filt[j] - filt[j + 1] > self.jump_thresh and filt[j + 1] < self.max_barrier_dist:
+                        end_idx = j
+                        r_right = filt[j + 1]
+                        break
+
+                if end_idx is not None:
+                    # _|==|_ 펄스 구간 발견: 양단 배리어 값으로 국소 선형 보간
+                    steps = end_idx - start_idx + 1
+                    filt[start_idx:end_idx + 1] = np.linspace(r_left, r_right, steps)
+                    i = end_idx + 1
+                else:
+                    # 배열 끝(후방)까지 외벽이 이어진 경우: r_left 값으로 평탄화
+                    filt[start_idx:] = r_left
+                    break
             else:
-                # 현재 프레임이 전면 월담 시 직전 프레임의 유효 배리어 참조
-                prev_valid = self.prev_filtered[mask & (self.prev_filtered < self.ellipse_r)]
-                ref_b = float(np.median(prev_valid)) if len(prev_valid) > 0 else 1.5
+                i += 1
 
-            # 2. 포락선을 넘어 저 뒤쪽 연구실 벽을 보는 빔 선별
-            leak = mask & (filtered > self.ellipse_r)
-            if np.any(leak):
-                target = np.minimum(ref_b, self.ellipse_r[leak])
-                filtered[leak] = self.alpha * self.prev_filtered[leak] + (1.0 - self.alpha) * target
+        # 2. Backward Scan: 배열 시작점(우측 후방)부터 외벽으로 시작하여 배리어로 떨어지는 경우 처리
+        # (시작점이 이미 월담 상태인 경우 r_right 값으로 앞단 평탄화)
+        for j in range(0, n - 1):
+            if filt[j] - filt[j + 1] > self.jump_thresh and filt[j + 1] < self.max_barrier_dist:
+                if filt[0] > self.max_barrier_dist:
+                    filt[0:j + 1] = filt[j + 1]
+                break
 
-        self.prev_filtered = filtered
-        return filtered
+        return filt
 
     def __call__(self, scan_features: np.ndarray) -> np.ndarray:
         return self.filter(scan_features)
