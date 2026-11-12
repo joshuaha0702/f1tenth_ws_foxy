@@ -1,0 +1,94 @@
+{
+  "100hz_permutation_importance": {
+    "Right Rear (0-59)": {
+      "steer_inc_pct": 5.1995223384388005,
+      "speed_inc_pct": 0.83063721740652,
+      "total_inc_pct": 0.9627765329642614
+    },
+    "Right (60-119)": {
+      "steer_inc_pct": 36.52114152620573,
+      "speed_inc_pct": 0.85132160553848,
+      "total_inc_pct": 1.9301747819918023
+    },
+    "Front-Right (120-179)": {
+      "steer_inc_pct": -4.232690333591928,
+      "speed_inc_pct": 0.457264462606185,
+      "total_inc_pct": 0.315414219443913
+    },
+    "Front-Left (180-239)": {
+      "steer_inc_pct": -9.915581617794842,
+      "speed_inc_pct": 0.40797040849187866,
+      "total_inc_pct": 0.09572894159882103
+    },
+    "Left (240-299)": {
+      "steer_inc_pct": 28.371698681610912,
+      "speed_inc_pct": 2.2096021010932976,
+      "total_inc_pct": 3.0008889946449058
+    },
+    "Left Rear (300-359)": {
+      "steer_inc_pct": -0.7265809954499414,
+      "speed_inc_pct": 0.35853956995246783,
+      "total_inc_pct": 0.3257195060602699
+    },
+    "Speed Input": {
+      "steer_inc_pct": -1.6010337195168576,
+      "speed_inc_pct": 2.06159548253525,
+      "total_inc_pct": 1.950817262807959
+    }
+  },
+  "30hz_permutation_importance": {
+    "Right Rear (0-59)": {
+      "steer_inc_pct": 3.6457014145275872,
+      "speed_inc_pct": 11.827853557796873,
+      "total_inc_pct": 11.392320696607968
+    },
+    "Right (60-119)": {
+      "steer_inc_pct": 29.71056688919488,
+      "speed_inc_pct": 11.247231013391342,
+      "total_inc_pct": 12.230027392666091
+    },
+    "Front-Right (120-179)": {
+      "steer_inc_pct": 1.791192966665235,
+      "speed_inc_pct": 47.95822993577786,
+      "total_inc_pct": 45.50077603469006
+    },
+    "Front-Left (180-239)": {
+      "steer_inc_pct": 2.5911282429484763,
+      "speed_inc_pct": 34.15542122810314,
+      "total_inc_pct": 32.47526586133481
+    },
+    "Left (240-299)": {
+      "steer_inc_pct": 36.43630299955487,
+      "speed_inc_pct": 12.64923721104527,
+      "total_inc_pct": 13.915413718247006
+    },
+    "Left Rear (300-359)": {
+      "steer_inc_pct": 12.019802803529492,
+      "speed_inc_pct": 10.832623027453927,
+      "total_inc_pct": 10.895816157521189
+    },
+    "Speed Input": {
+      "steer_inc_pct": -0.6153992804763216,
+      "speed_inc_pct": -1.266815105420708,
+      "total_inc_pct": -1.2321404876558657
+    }
+  },
+  "100hz_smoothness": {
+    "mean_sample_rate": 121.47668663027588,
+    "mean_steer_std": 0.07223616314867351,
+    "mean_steer_vel": 0.4115539963601137,
+    "p95_steer_vel": 1.471889926613736,
+    "mean_steer_jerk": 61.2152444176383,
+    "p95_steer_jerk": 211.3702914405611,
+    "count_episodes": 50
+  },
+  "30hz_smoothness": {
+    "mean_sample_rate": 120.13316971949408,
+    "mean_steer_std": 0.0713296089030992,
+    "mean_steer_vel": 0.276612988238137,
+    "p95_steer_vel": 1.3983322292412483,
+    "mean_steer_jerk": 67.96198109881435,
+    "p95_steer_jerk": 307.06080621339817,
+    "count_episodes": 50
+  }
+}
