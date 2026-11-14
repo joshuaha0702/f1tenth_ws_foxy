@@ -24,6 +24,75 @@ def hidden_scale_from_state_dict(state_dict, processed_features: int = 420):
     return scale
 
 
+class _CUDAGraphRunner:
+    """고정 shape CUDA Graph 재실행 래퍼."""
+    def __init__(self, graph, h_buf: torch.Tensor, out_buf: torch.Tensor, h_out_buf: torch.Tensor):
+        self.graph = graph
+        self.h_buf = h_buf
+        self.out_buf = out_buf
+        self.h_out_buf = h_out_buf
+
+    def __call__(self, prev_hidden: Optional[torch.Tensor]):
+        if prev_hidden is None:
+            self.h_buf.zero_()
+        else:
+            self.h_buf.copy_(prev_hidden)
+        self.graph.replay()
+        return self.out_buf, self.h_out_buf
+
+
+class _TracedRunner:
+    """TorchScript trace+freeze 실행 래퍼 (CPU 및 CUDA Graph 미지원 시 폴백)."""
+    def __init__(self, traced, x_buf: torch.Tensor, s_buf: torch.Tensor, h0: torch.Tensor):
+        self.traced = traced
+        self.x_buf = x_buf
+        self.s_buf = s_buf
+        self.h0 = h0
+
+    def __call__(self, prev_hidden: Optional[torch.Tensor]):
+        h_in = self.h0 if prev_hidden is None else prev_hidden
+        return self.traced(self.x_buf, self.s_buf, h_in)
+
+
+def _compile_fast_forward(model: nn.Module, x_buf: torch.Tensor, s_buf: torch.Tensor):
+    """GRU 실시간 추론용 CUDA Graph / TorchScript 컴파일 및 워밍업."""
+    if not hasattr(model, "gru"):
+        return None
+    h_buf = torch.zeros(model.gru.num_layers, 1, model.gru.hidden_size,
+                        dtype=torch.float32, device=x_buf.device)
+    was_training = model.training
+    model.eval()
+    try:
+        with torch.inference_mode():
+            traced = torch.jit.freeze(torch.jit.trace(model, (x_buf, s_buf, h_buf)))
+            for _ in range(2):
+                traced(x_buf, s_buf, h_buf)
+            if x_buf.is_cuda and hasattr(torch.cuda, "CUDAGraph"):
+                try:
+                    stream = torch.cuda.Stream(device=x_buf.device)
+                    stream.wait_stream(torch.cuda.current_stream(x_buf.device))
+                    with torch.cuda.stream(stream):
+                        for _ in range(3):
+                            traced(x_buf, s_buf, h_buf)
+                    torch.cuda.current_stream(x_buf.device).wait_stream(stream)
+                    graph = torch.cuda.CUDAGraph()
+                    with torch.cuda.graph(graph):
+                        out_buf, h_out_buf = traced(x_buf, s_buf, h_buf)
+                    graph.replay()
+                    torch.cuda.synchronize(x_buf.device)
+                    return _CUDAGraphRunner(graph, h_buf, out_buf, h_out_buf)
+                except Exception:
+                    pass
+            if x_buf.is_cuda:
+                torch.cuda.synchronize(x_buf.device)
+            return _TracedRunner(traced, x_buf, s_buf, h_buf)
+    except Exception:
+        return None
+    finally:
+        if was_training:
+            model.train()
+
+
 class End2Race(nn.Module):
     def __init__(self, mask_prob=0.0, hidden_scale=4, speed_dims=1):
         super(End2Race, self).__init__()
@@ -116,6 +185,7 @@ class End2Race(nn.Module):
         self._infer_device = device
         self._x_buf = torch.zeros(1, 1, self.num_features, dtype=torch.float32, device=device)
         self._s_buf = torch.zeros(1, 1, max(self.speed_dims, 1), dtype=torch.float32, device=device)
+        self._fast_forward = _compile_fast_forward(self, self._x_buf, self._s_buf)
 
     @torch.inference_mode()
     def inference_step(self, lidar_data: np.ndarray, current_speed,
@@ -131,7 +201,10 @@ class End2Race(nn.Module):
         else:
             self._s_buf.copy_(torch.as_tensor(current_speed, dtype=torch.float32).view(1, 1, self.speed_dims))
 
-        actions_tensor, next_hidden = self.forward(self._x_buf, self._s_buf, prev_hidden)
+        if getattr(self, "_fast_forward", None) is not None:
+            actions_tensor, next_hidden = self._fast_forward(prev_hidden)
+        else:
+            actions_tensor, next_hidden = self.forward(self._x_buf, self._s_buf, prev_hidden)
         actions = actions_tensor.squeeze().cpu().numpy()
         return actions, next_hidden
 
@@ -402,6 +475,7 @@ class End2RaceNorm(nn.Module):
         self._infer_device = device
         self._x_buf = torch.zeros(1, 1, self.num_features, dtype=torch.float32, device=device)
         self._s_buf = torch.zeros(1, 1, self.speed_dims, dtype=torch.float32, device=device)
+        self._fast_forward = _compile_fast_forward(self, self._x_buf, self._s_buf)
 
     @torch.inference_mode()
     def inference_step(self, lidar_data: np.ndarray, current_speed,
@@ -420,7 +494,10 @@ class End2RaceNorm(nn.Module):
         else:
             self._s_buf.copy_(torch.as_tensor(current_speed, dtype=torch.float32).view(1, 1, self.speed_dims))
 
-        actions_tensor, next_hidden = self.forward(self._x_buf, self._s_buf, prev_hidden)
+        if getattr(self, "_fast_forward", None) is not None:
+            actions_tensor, next_hidden = self._fast_forward(prev_hidden)
+        else:
+            actions_tensor, next_hidden = self.forward(self._x_buf, self._s_buf, prev_hidden)
         actions = actions_tensor.squeeze().cpu().numpy()
 
         if unnormalize:
