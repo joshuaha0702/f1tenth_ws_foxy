@@ -29,17 +29,34 @@ class SpatioTemporalScanFilter:
     """
 
     def __init__(self, num_bins=NUM_FEATURES, fov_min=FOV_MIN, fov_max=FOV_MAX,
-                 a=6.0, b=2.2, alpha=0.85, jump_thresh=1.2, max_barrier_dist=3.2, **kwargs):
+                 a=6.0, b=2.2, alpha=0.85, jump_thresh=1.2, max_barrier_dist=3.2,
+                 min_overflow_dist=4.5, max_obstacle_width=30, **kwargs):
         self.num_bins = num_bins
         self.fov_min = fov_min
         self.fov_max = fov_max
-        self.jump_thresh = float(jump_thresh)          # 배리어 월담 스텝 점프 임계값 (m)
-        self.max_barrier_dist = float(max_barrier_dist) # 배리어로 인정 가능한 최대 거리 (m)
+        self.jump_thresh = float(jump_thresh)              # 배리어 월담 스텝 점프 임계값 (m)
+        self.max_barrier_dist = float(max_barrier_dist)    # 배리어로 인정 가능한 최대 거리 (m)
+        self.min_overflow_dist = float(min_overflow_dist)  # 월담 외벽으로 인정할 최소 도달 거리 (m)
+        self.max_obstacle_width = int(max_obstacle_width)  # 선행차/장애물로 판단할 최대 빔 너비
         self.angles = np.linspace(fov_min, fov_max, num_bins)
 
     def reset(self):
         """에피소드 시작/정지 시 필터 상태 초기화 (단일 프레임 처리로 무상태)."""
         pass
+
+    def _is_narrow_obstacle(self, filt: np.ndarray, idx: int, dist_tol: float = 0.4) -> bool:
+        """Condition 3: idx가 좁은 장애물(선행차 등 <= max_obstacle_width 빔)에 속하는지 판별."""
+        n = len(filt)
+        r = filt[idx]
+        left = idx
+        while left > 0 and abs(filt[left - 1] - r) <= dist_tol:
+            left -= 1
+        right = idx
+        while right < n - 1 and abs(filt[right + 1] - r) <= dist_tol:
+            right += 1
+        width = right - left + 1
+        is_trough = (left > 0 and filt[left - 1] - r > 0.8) or (right < n - 1 and filt[right + 1] - r > 0.8)
+        return (width <= self.max_obstacle_width) and is_trough
 
     def filter(self, scan_features: np.ndarray) -> np.ndarray:
         """360-feature 라이다 배열을 입력받아 월담 펄스를 에지 보간하여 반환 (Zero-Lag)."""
@@ -50,8 +67,15 @@ class SpatioTemporalScanFilter:
         # 1. Forward Scan: Positive Edge (_|) 감지 후 Negative Edge (|_) 탐색
         i = 1
         while i < n - 1:
-            # Positive edge: 배리어(< max_barrier_dist)에서 외벽(jump_thresh 이상 폭등)으로 점프
-            if filt[i] - filt[i - 1] > self.jump_thresh and filt[i - 1] < self.max_barrier_dist:
+            # Condition 3 우선 판단: 점프 직전 값이 좁은 장애물(앞차 등 <= 30빔)이면 스킵
+            if self._is_narrow_obstacle(filt, i - 1):
+                i += 1
+                continue
+
+            # Condition 1 판단: 배리어(< max_barrier_dist)에서 일정 거리(>= min_overflow_dist) 이상 외벽으로 폭등 시
+            if (filt[i] - filt[i - 1] > self.jump_thresh
+                    and filt[i - 1] < self.max_barrier_dist
+                    and filt[i] >= self.min_overflow_dist):
                 start_idx = i
                 r_left = filt[i - 1]
                 end_idx = None
@@ -60,6 +84,9 @@ class SpatioTemporalScanFilter:
                 # 이후 하강 에지 (외벽 -> 배리어 복귀) 탐색
                 for j in range(i, n - 1):
                     if filt[j] - filt[j + 1] > self.jump_thresh and filt[j + 1] < self.max_barrier_dist:
+                        # 하강 도착점이 좁은 장애물(앞차)이면 배리어 복귀가 아니므로 무시
+                        if self._is_narrow_obstacle(filt, j + 1):
+                            continue
                         end_idx = j
                         r_right = filt[j + 1]
                         break
@@ -77,10 +104,9 @@ class SpatioTemporalScanFilter:
                 i += 1
 
         # 2. Backward Scan: 배열 시작점(우측 후방)부터 외벽으로 시작하여 배리어로 떨어지는 경우 처리
-        # (시작점이 이미 월담 상태인 경우 r_right 값으로 앞단 평탄화)
         for j in range(0, n - 1):
             if filt[j] - filt[j + 1] > self.jump_thresh and filt[j + 1] < self.max_barrier_dist:
-                if filt[0] > self.max_barrier_dist:
+                if not self._is_narrow_obstacle(filt, j + 1) and filt[0] >= self.min_overflow_dist:
                     filt[0:j + 1] = filt[j + 1]
                 break
 
